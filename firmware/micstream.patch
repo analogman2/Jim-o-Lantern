@@ -1,0 +1,108 @@
+diff --git a/usermods/audioreactive/audio_reactive.cpp b/usermods/audioreactive/audio_reactive.cpp
+index 196fba3..cf6ab77 100644
+--- a/usermods/audioreactive/audio_reactive.cpp
++++ b/usermods/audioreactive/audio_reactive.cpp
+@@ -165,6 +165,75 @@ static FFTsampleType* windowFFT = nullptr;
+ constexpr i2s_port_t I2S_PORT = I2S_NUM_0;       // I2S port to use (do not change !)
+ constexpr int BLOCK_SIZE = 128;                  // I2S buffer size (samples)
+ 
++////////////////////////////////////////////////////////////////////////////
++// Raw mic streaming (talking pumpkin patch)
++// A client sends a UDP packet "PMIC" [+ uint8 gain] to MICSTREAM_PORT about
++// once per second; while those keep arriving, every batch of raw samples is
++// amplified by gain (default 16; samples are floats with fractional bits, so this
++// keeps resolution that int16 conversion would otherwise lose) and sent back as:
++// "PMA1" | uint32 seq | uint32 rate | uint16 n | int16[n]
++// Sampling continues even in realtime (UDP/DDP/E1.31) LED mode while streaming.
++////////////////////////////////////////////////////////////////////////////
++#include <lwip/sockets.h>
++#define MICSTREAM_PORT 21330
++#define MICSTREAM_TIMEOUT_MS 3000
++static volatile int micStreamSock = -1;
++static struct sockaddr_in micStreamDest;
++static volatile unsigned long micStreamLastSub = 0;
++static volatile bool micStreamHasDest = false;
++static volatile float micStreamGain = 16.0f;
++static uint32_t micStreamSeq = 0;
++
++static void micStreamOpen() {
++  if (micStreamSock >= 0) return;
++  int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
++  if (s < 0) return;
++  struct sockaddr_in addr = {};
++  addr.sin_family = AF_INET;
++  addr.sin_port = htons(MICSTREAM_PORT);
++  addr.sin_addr.s_addr = htonl(INADDR_ANY);
++  if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) < 0) { close(s); return; }
++  fcntl(s, F_SETFL, O_NONBLOCK);
++  micStreamSock = s;
++}
++
++// poll for subscriptions; returns true while a client is subscribed
++static bool micStreamActive() {
++  int s = micStreamSock;
++  if (s < 0) return false;
++  char buf[8];
++  struct sockaddr_in from;
++  socklen_t fromLen = sizeof(from);
++  int n;
++  while ((n = recvfrom(s, buf, sizeof(buf), 0, (struct sockaddr*)&from, &fromLen)) > 0) {
++    if (n >= 4 && memcmp(buf, "PMIC", 4) == 0) {
++      micStreamDest = from;
++      micStreamHasDest = true;
++      micStreamGain = (n >= 5 && buf[4] != 0) ? (float)(uint8_t)buf[4] : 16.0f;
++      micStreamLastSub = millis();
++    }
++    fromLen = sizeof(from);
++  }
++  return micStreamHasDest && (millis() - micStreamLastSub < MICSTREAM_TIMEOUT_MS);
++}
++
++template<typename T> static void micStreamSend(const T* samples, uint16_t count, uint32_t rate) {
++  static uint8_t pkt[14 + 2 * 512];
++  if (count > 512) count = 512;
++  memcpy(pkt, "PMA1", 4);
++  uint32_t seq = micStreamSeq++;
++  memcpy(pkt + 4, &seq, 4);
++  memcpy(pkt + 8, &rate, 4);
++  memcpy(pkt + 12, &count, 2);
++  int16_t* out = (int16_t*)(pkt + 14);
++  float gain = micStreamGain;
++  for (int i = 0; i < count; i++) {
++    float v = (float)samples[i] * gain;
++    out[i] = (int16_t)(v > 32767.0f ? 32767 : (v < -32768.0f ? -32768 : v));
++  }
++  sendto(micStreamSock, pkt, 14 + 2 * count, 0, (struct sockaddr*)&micStreamDest, sizeof(micStreamDest));
++}
++
+ // globals
+ static uint8_t inputLevel = 128;              // UI slider value
+ #ifndef SR_SQUELCH
+@@ -351,7 +420,9 @@ void FFTcode(void * parameter)
+                         // taskYIELD(), yield(), vTaskDelay() and esp_task_wdt_feed() didn't seem to work.
+ 
+     // Don't run FFT computing code if we're in Receive mode or in realtime mode
+-    if (disableSoundProcessing || (audioSyncEnabled & 0x02)) {
++    bool soundProcessingOff = disableSoundProcessing || (audioSyncEnabled & 0x02);
++    bool micStreaming = micStreamActive() && audioSource && audioSource->isInitialized();
++    if (soundProcessingOff && !micStreaming) {
+       vTaskDelayUntil( &xLastWakeTime, xFrequency);        // release CPU, and let I2S fill its buffers
+       continue;
+     }
+@@ -363,6 +434,8 @@ void FFTcode(void * parameter)
+ 
+     // get a fresh batch of samples from I2S
+     if (audioSource) audioSource->getSamples(valFFT, samplesFFT); // note: valFFT is used as a int16_t buffer on C3 and S2, could optimize RAM use by only allocating half the size (but makes code harder to read)
++    if (micStreaming) micStreamSend(valFFT, samplesFFT, SAMPLE_RATE);
++    if (soundProcessingOff) continue;  // only sampling for the mic stream; getSamples() blocks, so this paces itself
+ 
+ #if defined(WLED_DEBUG) || defined(SR_DEBUG)
+     if (start < esp_timer_get_time()) { // filter out overflows
+@@ -1504,6 +1577,7 @@ class AudioReactive : public Usermod {
+      */
+     void connected() override
+     {
++      micStreamOpen();
+       if (udpSyncConnected) {   // clean-up: if open, close old UDP sync connection
+         udpSyncConnected = false;
+         fftUdp.stop();

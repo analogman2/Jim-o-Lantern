@@ -1,0 +1,19 @@
+# Python environments (recreate with ./setup.sh)
+.venv/
+.venv-*/
+__pycache__/
+*.pyc
+
+# Downloaded models (./setup.sh fetches them)
+voices/*.onnx
+voices/*.onnx.json
+voices/*.bin
+
+# Firmware build tree and personal device backup
+firmware/WLED/
+firmware/backup/
+firmware/*.wav
+
+# Scratch audio; only the demo clip is kept
+samples/*.wav
+!samples/jim_demo.wav
