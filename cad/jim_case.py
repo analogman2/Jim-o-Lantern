@@ -11,7 +11,8 @@ Print in ASA or PETG (not PLA: it warps in sun and heat). The body prints uprigh
 floor; the lid prints upside down (top on the bed). No supports needed except the camera hood.
 Heat-set inserts: M3 (corner posts, speaker, camera, socket), M2.5 (Pi), M4 (post thumbscrew).
 """
-from build123d import (Align, Axis, Box, Cylinder, Pos, Rot, export_step, export_stl, fillet)
+from build123d import (Align, Axis, Box, Cylinder, Ellipse, Polygon, Pos, Rectangle, Rot, Text,
+                       export_step, export_stl, extrude, fillet)
 import math
 import os
 
@@ -64,12 +65,59 @@ SOCKET_SPACING = 36.0                           # its screw pattern (square)
 
 LID_T, LID_OVERHANG, SKIRT, SKIRT_GAP = 4.0, 5.0, 8.0, 0.6
 
+# ---------------------------------------------------------------- the Jim-o'-Lantern graphic
+FONT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "Creepster-Regular.ttf")
+EMBOSS = 1.2                                    # how far the graphic stands out from the wall
+LOGO_ICON = (97.0, 40.0)                        # pumpkin icon centre on the front (x, z)
+LOGO_TEXT_X, LOGO_TEXT_SIZE = 118.0, 22.0       # "Jim-o'-" / "Lantern", to the right of the icon
+LOGO_LINES_Z = (45.0, 21.0)                     # baselines of the two lines
+SIDE_TEXT, SIDE_TEXT_SIZE, SIDE_TEXT_Z = "Don't call me Jack!", 14.0, 52.0
+
 
 def at(x, y, z, shape):
     return Pos(x, y, z) * shape
 
 
+def pumpkin_icon():
+    """A little carved jack-o'-lantern (2D, centred on the origin, about 37 x 36 mm)."""
+    p = Ellipse(10, 15) + Pos(-8.5, -0.5) * Ellipse(10, 13.5) + Pos(8.5, -0.5) * Ellipse(10, 13.5)
+    p += Pos(0.8, 16.5) * Rot(Z=-12) * Rectangle(4, 7)                     # stem
+    p -= Polygon((-10, 1.5), (-3, 1.5), (-6.5, 8), align=None)            # eyes
+    p -= Polygon((3, 1.5), (10, 1.5), (6.5, 8), align=None)
+    p -= Polygon((-1.6, -2.5), (1.6, -2.5), (0, 0.5), align=None)         # nose
+    p -= Polygon((-12, -4.5), (-8.5, -6.5), (-6, -4.6), (-3.5, -6.8), (0, -5.5), (3.5, -6.8),
+                 (6, -4.6), (8.5, -6.5), (12, -4.5), (9.5, -9.5), (6.5, -8.5), (4, -11.5),
+                 (-4, -11.5), (-6.5, -8.5), (-9.5, -9.5), align=None)       # jagged grin
+    return p
+
+
+def on_front(sketch, x, z):
+    """Emboss a 2D sketch onto the front wall (reads left to right, standing out toward -Y)."""
+    return Pos(x, 0.3, z) * Rot(X=90) * extrude(sketch, EMBOSS + 0.3)
+
+
+def on_right_side(sketch, y, z):
+    """Emboss a 2D sketch onto the right-hand wall (reads front to back, standing out toward +X)."""
+    return Pos(W - 0.3, y, z) * Rot(Z=90) * Rot(X=90) * extrude(sketch, EMBOSS + 0.3)
+
+
+def logo():
+    """The raised graphic, in body coordinates. Exported on its own too, so an AMS printer can
+    print it in a second colour (load body_plain + logo as one object, two filaments)."""
+    g = on_front(pumpkin_icon(), *LOGO_ICON)
+    for line, z in zip(("Jim-o'-", "Lantern"), LOGO_LINES_Z):
+        g += on_front(Text(line, LOGO_TEXT_SIZE, font_path=FONT, align=(Align.MIN, Align.MIN)),
+                      LOGO_TEXT_X, z)
+    side = Text(SIDE_TEXT, SIDE_TEXT_SIZE, font_path=FONT, align=(Align.CENTER, Align.CENTER))
+    g += on_right_side(side, D / 2, SIDE_TEXT_Z)
+    return g
+
+
 def body():
+    return body_plain() + logo()
+
+
+def body_plain():
     outer = fillet(Box(W, D, H, align=MIN).edges().filter_by(Axis.Z), CORNER_R)
     inner = at(WALL, WALL, FLOOR, Box(W - 2 * WALL, D - 2 * WALL, H, align=MIN))
     b = outer - inner
@@ -202,7 +250,9 @@ def post_socket():
 
 
 PARTS = {"body": body, "lid": lid, "speaker_cup": speaker_cup,
-         "camera_mount": camera_mount, "post_socket": post_socket}
+         "camera_mount": camera_mount, "post_socket": post_socket,
+         # two-colour printing: body_plain + logo, loaded together as one object
+         "body_plain": body_plain, "logo": logo}
 
 if __name__ == "__main__":
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out")

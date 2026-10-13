@@ -7,11 +7,22 @@ The PC stays indoors and does the thinking over Wi-Fi.
 
 | Printed part | Size (mm) | Print orientation |
 |---|---|---|
-| `body` | 214 × 144 × 110 | Upright on its floor. Tree supports only under the camera hood |
+| `body` | 215 × 144 × 110 | Upright on its floor. Tree supports only under the camera hood |
 | `lid` | 224 × 140 × 14 | Upside down (top surface on the bed) |
 | `speaker_cup` | 70 × 70 × 42 | Flange down |
 | `camera_mount` | 46 × 30 × 6 | Flat |
 | `post_socket` | 50 × 50 × 45 | Flange down |
+
+The body carries a raised **Jim-o'-Lantern** graphic: a carved pumpkin and his name on the front,
+and "Don't call me Jack!" on the right side. The font is
+[Creepster](fonts/OFL.txt) (SIL Open Font License).
+
+![The graphic](out/preview_logo.png)
+
+**Two colours (AMS):** instead of `body`, load `body_plain` and `logo` together as one object
+(Bambu Studio asks *"Load as a single object with multiple parts?"*: choose **Yes**). Then set the
+logo to black and the body to orange. The pumpkin's carved eyes and grin show orange through.
+Single colour: print `body`, which already has the graphic.
 
 STL and STEP files are in [`out/`](out). To change any size, edit the numbers at the top of
 [`jim_case.py`](jim_case.py), then run `../.venv-cad/bin/python jim_case.py` (and `render.py` for

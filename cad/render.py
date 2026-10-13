@@ -5,6 +5,7 @@ import os
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.collections import PolyCollection
 import numpy as np
 from build123d import Pos, Rot, export_stl
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
@@ -42,6 +43,22 @@ def finish(ax, pts, elev, azim, title, path):
     print("wrote", path)
 
 
+def logo_flat(tmp):
+    """The raised graphic drawn flat on an orange background, front and right side."""
+    v = tris(J.logo(), tmp)
+    normals_y = np.cross(v[:, 1] - v[:, 0], v[:, 2] - v[:, 0])[:, 1]
+    front = v[(v[:, :, 1] < 0.5).all(1) & (np.abs(normals_y) > 1e-6)][:, :, [0, 2]]
+    side = v[(v[:, :, 0] > J.W - 0.5).all(1)][:, :, [1, 2]]
+    fig, axes = plt.subplots(2, 1, figsize=(10, 7), gridspec_kw={"height_ratios": [3, 1.2]})
+    for ax, tri, title, xl, yl in [(axes[0], front, "Front", (0, J.W), (0, J.H)),
+                                   (axes[1], side, "Right side", (0, J.D), (30, 75))]:
+        ax.add_collection(PolyCollection(tri, facecolors="#151515", edgecolors="none"))
+        ax.set_facecolor("#e07a1f"); ax.set_xlim(*xl); ax.set_ylim(*yl)
+        ax.set_aspect("equal"); ax.set_title(title); ax.set_xticks([]); ax.set_yticks([])
+    plt.tight_layout(); plt.savefig(os.path.join(OUT, "preview_logo.png"), dpi=110); plt.close()
+    print("wrote", os.path.join(OUT, "preview_logo.png"))
+
+
 def main():
     tmp = os.path.join(OUT, "_tmp.stl")
     # exploded assembly: lid lifted and flipped right side up, socket below, cup and camera inside
@@ -65,6 +82,7 @@ def main():
         fig = plt.figure(figsize=(7, 7)); ax = fig.add_subplot(projection="3d")
         p = draw(ax, tris(make(), tmp), color)
         finish(ax, p, elev, azim, name.replace("_", " "), os.path.join(OUT, f"preview_{name}.png"))
+    logo_flat(tmp)
     os.remove(tmp)
 
 
