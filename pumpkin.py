@@ -338,6 +338,112 @@ class Mic(threading.Thread):
                         self.utterances.put(self.to_16k(audio))
 
 
+# ------------------------------------------------------------------- camera
+
+CAMERA_FILE = os.path.expanduser("~/.config/jim/rtsp")  # written by set_camera.sh
+
+
+def camera_url():
+    """The camera's RTSP address: $JIM_RTSP, else ~/.config/jim/rtsp (kept out of the repo
+    because it contains the camera password)."""
+    if os.environ.get("JIM_RTSP"):
+        return os.environ["JIM_RTSP"].strip()
+    try:
+        with open(CAMERA_FILE) as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+class Camera(threading.Thread):
+    """Keeps the latest frame of an RTSP camera in memory as a small JPEG, so Jim can see
+    the costumes. Frames are never written to disk."""
+
+    def __init__(self, url, crop=None, width=768, fps=2):
+        super().__init__(daemon=True)
+        self.url, self.width, self.fps = url, width, fps
+        self.crop = crop  # (x, y, w, h) as fractions of the frame, or None
+        self.frame, self.frame_time = None, 0.0
+        self.lock = threading.Lock()
+
+    def latest(self, max_age=3.0):
+        """The newest frame (JPEG bytes) if it's fresh, else None."""
+        with self.lock:
+            if self.frame and time.time() - self.frame_time < max_age:
+                return self.frame
+        return None
+
+    def run(self):
+        vf = f"fps={self.fps},scale={self.width}:-2"
+        if self.crop:
+            x, y, w, h = self.crop
+            vf = f"crop=iw*{w}:ih*{h}:iw*{x}:ih*{y}," + vf
+        cmd = ["ffmpeg", "-loglevel", "error", "-rtsp_transport", "tcp", "-i", self.url,
+               "-an", "-vf", vf, "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "4", "-"]
+        warned = False
+        while True:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            buf = b""
+            while chunk := proc.stdout.read(65536):
+                buf += chunk
+                while True:  # split the stream into JPEGs (FFD8 ... FFD9)
+                    start = buf.find(b"\xff\xd8")
+                    end = buf.find(b"\xff\xd9", start + 2)
+                    if start < 0 or end < 0:
+                        break
+                    with self.lock:
+                        self.frame, self.frame_time = buf[start:end + 2], time.time()
+                    if warned:
+                        print("[camera] connected again")
+                        warned = False
+                    buf = buf[end + 2:]
+            proc.wait()
+            if not warned:  # never print the URL: it contains the password
+                print("[camera] lost the feed; retrying every 5 s", file=sys.stderr)
+                warned = True
+            time.sleep(5)
+
+
+VISION_RULES = """
+
+You can see: a picture of the driveway in front of you comes with some messages. Use it to roast \
+what visitors are wearing: costumes, masks, props, candy bags, wagons, pets in costume. Strict \
+rules: never comment on anyone's face, body, size, weight, skin, hair, age, gender, race, glasses, \
+disabilities, or anything they can't change, and never describe details that could identify \
+someone. Only costumes and stuff. If you're not sure what a costume is, take a wild, funny guess \
+or demand to know. Never mention a camera or picture: you just see them, because you're a magic \
+pumpkin."""
+
+VISION_GREETING_ASK = (
+    "[You just woke up. Attached is what you see in front of you right now. Greet them by "
+    "roasting what they're wearing, in one or two short sentences, under 30 words. If you "
+    "can't clearly see any trick-or-treaters or costumes, reply with exactly NONE.]")
+
+
+def clean_greeting(text):
+    """The model's vision greeting, or None if it saw nobody (or said something unusable)."""
+    text = (text or "").strip().strip('"')
+    if not text or re.search(r"\bNONE\b", text) or len(text) > 300:
+        return None
+    return text
+
+
+# Ollama can force this reply shape, so "is anyone there?" is a real yes/no, not prose.
+GREETING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "trick_or_treaters_visible": {"type": "boolean"},
+        "greeting": {"type": "string"},
+    },
+    "required": ["trick_or_treaters_visible", "greeting"],
+}
+VISION_GREETING_ASK_JSON = (
+    "[You just woke up. Attached is what you see in front of you right now. First decide "
+    "whether real people (trick-or-treaters) are clearly visible. If they are, write a greeting "
+    "that roasts what they're wearing, in one or two short sentences, under 30 words. If no "
+    "people are clearly visible, set trick_or_treaters_visible to false and leave greeting empty.]")
+
+
 # ---------------------------------------------------------------- speech-to-text
 
 HALLUCINATIONS = {"", "you", "thank you", "thanks for watching", "thank you for watching",
@@ -506,7 +612,36 @@ class Brain:
             {"role": "assistant", "content": greeting},
         ]
 
-    def reply_sentences(self, user_text):
+    def vision_greeting(self, image, timeout=4.0):
+        """A roast of what the camera shows, or None if nobody is clearly visible."""
+        import base64
+        try:
+            msg = self.client.with_options(timeout=timeout, max_retries=0).messages.create(
+                model=self.model, max_tokens=300, system=self.system_prompt(),
+                output_config={"effort": "low"},
+                messages=[{"role": "user", "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                 "data": base64.b64encode(image).decode()}},
+                    {"type": "text", "text": VISION_GREETING_ASK}]}])
+            if msg.stop_reason == "refusal":
+                return None
+            return clean_greeting("".join(b.text for b in msg.content if b.type == "text"))
+        except Exception as e:
+            print(f"[claude] vision greeting failed: {type(e).__name__}", file=sys.stderr)
+            return None
+
+    def messages_with_image(self, image):
+        """History with the current frame attached to the latest kid message only."""
+        import base64
+        if not image:
+            return self.history
+        last = self.history[-1]
+        return self.history[:-1] + [{"role": "user", "content": [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                         "data": base64.b64encode(image).decode()}},
+            {"type": "text", "text": last["content"]}]}]
+
+    def reply_sentences(self, user_text, image=None):
         """Stream Claude's reply, yielding one sentence at a time."""
         if UPSET_RE.search(user_text):
             if not self.gentle:
@@ -527,7 +662,7 @@ class Brain:
                 model=self.model,
                 max_tokens=2000,
                 system=self.system_prompt(),
-                messages=self.history,
+                messages=self.messages_with_image(image),
                 output_config={"effort": self.effort},
                 betas=["server-side-fallback-2026-07-01"],
                 fallbacks="default",
@@ -587,18 +722,47 @@ class OllamaBrain:
             {"role": "assistant", "content": greeting},
         ]
 
-    def _chat(self, messages, stream=True):
+    def _chat(self, messages, stream=True, timeout=60, max_tokens=200, schema=None):
         import json
         import urllib.request
-        body = json.dumps({
+        body = {
             "model": self.model, "messages": messages, "stream": stream,
             "think": False,          # qwen-style reasoning just adds latency here
             "keep_alive": "60m",     # keep the model loaded on the GPU between kids
-            "options": {"num_predict": 200, "temperature": 0.8, "num_ctx": 4096},
-        }).encode()
+            "options": {"num_predict": max_tokens, "temperature": 0.8, "num_ctx": 4096},
+        }
+        if schema:
+            body["format"] = schema
+        body = json.dumps(body).encode()
         req = urllib.request.Request(f"{self.url}/api/chat", body,
                                      {"Content-Type": "application/json"})
-        return urllib.request.urlopen(req, timeout=60)
+        return urllib.request.urlopen(req, timeout=timeout)
+
+    def vision_greeting(self, image, timeout=4.0):
+        """A roast of what the camera shows, or None if nobody is clearly visible."""
+        import base64
+        import json
+        try:
+            with self._chat([{"role": "system", "content": self.system_prompt()},
+                             {"role": "user", "content": VISION_GREETING_ASK_JSON,
+                              "images": [base64.b64encode(image).decode()]}],
+                            stream=False, timeout=timeout, max_tokens=120,
+                            schema=GREETING_SCHEMA) as resp:
+                answer = json.loads(json.loads(resp.read())["message"]["content"])
+            if not answer.get("trick_or_treaters_visible"):
+                return None
+            return clean_greeting(answer.get("greeting"))
+        except Exception as e:
+            print(f"[ollama] vision greeting failed: {type(e).__name__}", file=sys.stderr)
+            return None
+
+    def messages_with_image(self, image):
+        """History with the current frame attached to the latest kid message only."""
+        import base64
+        if not image:
+            return self.history
+        return self.history[:-1] + [dict(self.history[-1],
+                                         images=[base64.b64encode(image).decode()])]
 
     def warm_up(self):
         print(f"Loading {self.model} in Ollama...")
@@ -606,7 +770,7 @@ class OllamaBrain:
         self._chat([{"role": "system", "content": self.system},
                     {"role": "user", "content": "hi"}], stream=False).read()
 
-    def reply_sentences(self, user_text):
+    def reply_sentences(self, user_text, image=None):
         import json
         if UPSET_RE.search(user_text):
             if not self.gentle:
@@ -624,7 +788,7 @@ class OllamaBrain:
         full, buf = "", ""
         try:
             with self._chat([{"role": "system", "content": self.system_prompt()}]
-                            + self.history) as resp:
+                            + self.messages_with_image(image)) as resp:
                 for line in resp:
                     if not line.strip():
                         continue
@@ -993,6 +1157,12 @@ def main():
                         "sound for this many seconds (time to leave the room)")
     p.add_argument("--start-delay", type=float, default=0,
                    help="start out snoozing for this many seconds once loaded")
+    p.add_argument("--no-camera", action="store_true",
+                   help="don't use the camera even if one is set up (./set_camera.sh)")
+    p.add_argument("--camera-crop", default=None, metavar="X,Y,W,H",
+                   help="zoom the camera on the spot in front of the pumpkin, as fractions of "
+                        "the frame, e.g. 0.3,0.4,0.4,0.5")
+    p.add_argument("--camera-width", type=int, default=768, help="width of frames sent to the AI")
     p.add_argument("--type", action="store_true", help="type instead of using the mic (testing)")
     p.add_argument("--face-only", action="store_true", help="just animate the face (LED test)")
     args = p.parse_args()
@@ -1058,6 +1228,14 @@ def main():
                          "tags inline, at most once per reply: " +
                          ", ".join(f"[{t}]" for t in SOUND_TAGS) +
                          ". Example: \"Oh, that's hilarious. [groan] Not.\"")
+    camera = None
+    url = None if args.no_camera else camera_url()
+    if url:
+        crop = tuple(float(v) for v in args.camera_crop.split(",")) if args.camera_crop else None
+        camera = Camera(url, crop, args.camera_width)
+        camera.start()
+        brain.system += VISION_RULES
+        print("Camera on: Jim can see costumes.")
     if args.brain == "ollama":
         try:
             brain.warm_up()  # after the prompt is final, so the slow first pass happens now
@@ -1065,12 +1243,16 @@ def main():
             sys.exit(f"Couldn't reach Ollama at {args.ollama_url} ({e}). Is it running? "
                      f"Is the model pulled? (ollama pull {args.ollama_model})")
 
+    def see():
+        """The current camera frame, if there is a fresh one."""
+        return camera.latest() if camera else None
+
     def respond(text):
         if getattr(voice, "chunked", False):
             # Qwen3-TTS: get the whole reply, then stream it as one natural take.
             face.state = "thinking"
             t0 = time.time()
-            reply = " ".join(s.strip() for s in brain.reply_sentences(text)).strip()
+            reply = " ".join(s.strip() for s in brain.reply_sentences(text, see())).strip()
             voice.gentle = brain.gentle  # softer voice for a scared kid
             print(f"  🎃 {reply}")
 
@@ -1085,7 +1267,7 @@ def main():
             t0 = time.time()
 
             def sentences():
-                for s in brain.reply_sentences(text):
+                for s in brain.reply_sentences(text, see()):
                     print(f"  🎃 {s}")
                     yield s
 
@@ -1097,7 +1279,7 @@ def main():
             return
         face.state = "thinking"
         t0 = time.time()
-        reply = " ".join(s.strip() for s in brain.reply_sentences(text)).strip()
+        reply = " ".join(s.strip() for s in brain.reply_sentences(text, see())).strip()
         audio = voice.synth(reply)  # the whole reply in one take, so it flows naturally
         print(f"  🎃 {reply}   ({time.time() - t0:.2f}s)")
         face.state = "talking"
@@ -1151,13 +1333,29 @@ def main():
 
     def wake_up():
         mic.mute()
-        greeting = next(greetings)
         print("🔥 Jim wakes up!")
+        # Look at the visitors while the wake-up animation plays, and roast what they're wearing.
+        frame, seen = see(), {}
+        if frame:
+            looker = threading.Thread(daemon=True, target=lambda: seen.update(
+                greeting=brain.vision_greeting(frame, timeout=REVEAL_SECONDS + 2.0)))
+            looker.start()
         face.reveal()
         voice.play(rumble, mouth=False)
-        print(f"  🎃 {greeting}")
+        if frame:
+            looker.join(timeout=1.5)  # a little grace after the rumble
+        greeting = seen.get("greeting")
         face.state = "talking"
-        voice.play(greeting_audio[greeting])
+        if greeting:
+            print(f"  🎃 {greeting}   (roasting what he sees)")
+            if getattr(voice, "chunked", False):
+                voice.play_stream(voice.stream_chunks(greeting))
+            else:
+                voice.say(greeting)
+        else:  # nobody visible, no camera, or too slow: a pre-written greeting
+            greeting = next(greetings)
+            print(f"  🎃 {greeting}")
+            voice.play(greeting_audio[greeting])
         brain.prime(greeting)
         face.state = "idle"
         time.sleep(0.3)  # let the speaker's echo die out before listening again
