@@ -6,6 +6,8 @@ a scary blood-red strobe and a growl, insults your costume, and holds a real con
 trick-or-treaters, with a mouth that moves along with his voice. (And he is *not* a
 jack-o'-lantern. Don't call him Jack.)
 
+![Jim on the LED curtain: asleep with only his eyes lit, awake, and talking](docs/jim-curtain.svg)
+
 Listen to him: [`samples/jim_demo.wav`](samples/jim_demo.wav)
 
 Everything runs locally on one PC with an NVIDIA GPU. No cloud services are needed.
@@ -40,9 +42,16 @@ voice, no matter what the model would have done. Jim never asks for personal det
 
 ## Hardware
 
-- A WLED controller (ESP32) driving a 20×12 LED matrix, with a PDM microphone (AudioReactive)
-- A PC with an NVIDIA GPU (tested on an RTX 4090; Jim uses about 12 GB of video memory)
-- A speaker near the pumpkin (any audio output the PC can use)
+What I used:
+
+- **LED curtain:** [Govee Outdoor Net Lights, 240 LEDs, 2.8 × 4.7 ft (RGBIC)](https://www.amazon.com/dp/B0D73H4PJJ).
+  The 240 LEDs form Jim's 20 × 12 face. They're driven by the WLED controller below instead of
+  Govee's own controller.
+- **Controller:** [ESP32 WLED LED Strip Controller, 4 channel outputs, 15 A fuse](https://www.amazon.com/dp/B0F8NRG27V),
+  running WLED with AudioReactive and a PDM microphone. Its other outputs drive three extra
+  30-LED strips that glow along with Jim's voice.
+- **PC:** an NVIDIA GPU (tested on an RTX 4090; Jim uses about 12 GB of video memory).
+- **Speaker:** anything the PC can play through, placed near the pumpkin.
 
 ## Setup
 
@@ -112,3 +121,4 @@ WLED is licensed under the EUPL-1.2, and the patch and prebuilt image are derive
 | `setup.sh` | Creates the Python environments and downloads models |
 | `voices/jack_reference.wav` | Reference voice for the Chatterbox engine (generated, not a real person) |
 | `firmware/` | WLED mic-streaming patch and prebuilt firmware |
+| `docs/jim-curtain.svg` | The image above, rendered from Jim's real face-animation code |
