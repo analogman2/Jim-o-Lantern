@@ -4,6 +4,7 @@ mic -> Whisper -> LLM (Ollama or Claude) -> TTS -> speaker,
 with a lip-synced pumpkin face drawn on a WLED 20x12 LED curtain."""
 
 import argparse
+import json
 import os
 import queue
 import random
@@ -15,6 +16,33 @@ import threading
 import time
 
 import numpy as np
+
+_cuda12_loaded = False
+
+
+def load_cuda12_libs():
+    """Kokoro (onnxruntime-gpu) and the --local-whisper fallback are built for CUDA 12. Load its libraries
+    from this venv by full path, so nothing needs LD_LIBRARY_PATH (which would leak into the TTS servers'
+    own venvs and break them)."""
+    global _cuda12_loaded
+    if _cuda12_loaded:
+        return
+    import ctypes
+    import glob
+    import site
+    pending = sorted(glob.glob(os.path.join(site.getsitepackages()[0], "nvidia", "*", "lib", "*.so*")))
+    for _ in range(4):  # some libraries need others loaded first; retry the ones that failed
+        failed = []
+        for path in pending:
+            try:
+                ctypes.CDLL(path, mode=ctypes.RTLD_GLOBAL)
+            except OSError:
+                failed.append(path)
+        if len(failed) in (0, len(pending)):
+            break
+        pending = failed
+    _cuda12_loaded = True
+
 
 # ---------------------------------------------------------------- WLED output
 
@@ -453,8 +481,95 @@ HALLUCINATIONS = {"", "you", "thank you", "thanks for watching", "thank you for 
 WHISPER_HINT = "Kids trick-or-treating on Halloween talking to a pumpkin."
 
 
-class Ears:
+def filter_transcript(text):
+    """Drop what Whisper hears in silence or noise: stock phrases, or our own hint text."""
+    text = (text or "").strip()
+    norm = lambda t: re.sub(r"[^a-z ]", "", t.lower()).strip()
+    if norm(text) in HALLUCINATIONS or norm(WHISPER_HINT) in norm(text):
+        return ""
+    return text
+
+
+def wav_bytes(audio, rate=MIC_RATE):
+    """float32 mono samples -> a 16-bit WAV file in memory."""
+    import io
+    import wave
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes((np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes())
+    return buf.getvalue()
+
+
+def speech_service_up(url, timeout=2):
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url.rstrip("/") + "/health", timeout=timeout) as r:
+            return json.loads(r.read()).get("ok", False)
+    except Exception:
+        return False
+
+
+class ServiceEars:
+    """Speech-to-text through Agentora's shared speech service (faster-whisper small.en on the GPU under a
+    GPU-broker lease, so it takes turns with everything else on the card). Falls back to Whisper in this
+    process (LocalEars) if the service can't be reached, and tries the service again every 5 minutes."""
+
+    RETRY_S = 300
+
+    def __init__(self, url, local_model):
+        self.url, self.local_model = url.rstrip("/"), local_model
+        self.local, self.local_since = None, 0.0
+        if not speech_service_up(self.url):
+            self.use_local(f"speech service not reachable at {self.url}")
+
+    def use_local(self, why):
+        print(f"[stt] {why}: falling back to local Whisper on this machine", file=sys.stderr)
+        self.local, self.local_since = LocalEars(self.local_model), time.time()
+
+    def post(self, audio, timeout=30):
+        import urllib.request
+        boundary = "jimolantern" + os.urandom(8).hex()
+        parts = []
+        for name, value in [("language", b"en"), ("response_format", b"json")]:
+            parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'.encode()
+                         + value + b"\r\n")
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="jim.wav"\r\n'
+                     f"Content-Type: audio/wav\r\n\r\n".encode() + wav_bytes(audio) + b"\r\n")
+        body = b"".join(parts) + f"--{boundary}--\r\n".encode()
+        req = urllib.request.Request(self.url + "/v1/audio/transcriptions", body,
+                                     {"Content-Type": f"multipart/form-data; boundary={boundary}"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read()).get("text", "")
+
+    def transcribe(self, audio):
+        if self.local and time.time() - self.local_since > self.RETRY_S and speech_service_up(self.url):
+            print("[stt] speech service is back: using it again", file=sys.stderr)
+            self.local = None  # frees the local model's GPU memory
+        if self.local is None:
+            try:
+                return filter_transcript(self.post(audio))
+            except Exception as e:
+                self.use_local(f"speech service failed ({type(e).__name__}: {e})")
+        return self.local.transcribe(audio)
+
+    def warm(self):
+        """Ask the service to load Whisper now (a tiny silent clip), so the next phrase is fast."""
+        if self.local is None:
+            try:
+                self.post(np.zeros(MIC_RATE // 4, np.float32), timeout=60)
+            except Exception:
+                pass
+
+
+class LocalEars:
+    """Whisper in this process (the old way; --local-whisper, or when the speech service is down).
+    Grabs GPU memory without asking the broker, so it's only a fallback."""
+
     def __init__(self, model_name):
+        load_cuda12_libs()
         from faster_whisper import WhisperModel
         try:
             self.model = WhisperModel(model_name, device="cuda", compute_type="float16")
@@ -466,12 +581,11 @@ class Ears:
         segments, _ = self.model.transcribe(
             audio, language="en", beam_size=1, vad_filter=True,
             initial_prompt=WHISPER_HINT)
-        text = " ".join(s.text for s in segments
-                        if not (s.no_speech_prob > 0.6 and s.avg_logprob < -1.0)).strip()
-        norm = lambda t: re.sub(r"[^a-z ]", "", t.lower()).strip()
-        if norm(text) in HALLUCINATIONS or norm(WHISPER_HINT) in norm(text):
-            return ""  # silence/noise often comes back as a stock phrase or our own hint
-        return text
+        return filter_transcript(" ".join(s.text for s in segments
+                                          if not (s.no_speech_prob > 0.6 and s.avg_logprob < -1.0)))
+
+    def warm(self):
+        pass
 
 
 # ------------------------------------------------------------------ the brain
@@ -854,6 +968,7 @@ class Voice:
     through aplay while driving the pumpkin's mouth."""
 
     def __init__(self, voice, device, pitch, speed, intonation, echo, grit, lip_offset, face):
+        load_cuda12_libs()
         import onnxruntime as ort
         from kokoro_onnx import Kokoro
         ort.set_default_logger_severity(3)
@@ -998,6 +1113,72 @@ JACK_GENTLE_VOICE = ("A deep, slightly raspy old male voice, but warm, soft, slo
 TTS_VENVS = {"qwen": ".venv-qwentts", "chatterbox": ".venv-chatterbox"}
 
 
+def trim_clip(audio, rate):
+    """Trim a TTS clip's leading/trailing silence, then leave a natural pause before the next one."""
+    loud = np.nonzero(np.abs(audio) > 0.01 * (np.max(np.abs(audio)) + 1e-9))[0]
+    if len(loud):
+        pad = int(0.04 * rate)
+        audio = audio[max(0, loud[0] - pad):loud[-1] + pad]
+    return np.concatenate([audio, np.zeros(int(0.15 * rate), np.float32)])
+
+
+class SpeechServiceVoice(Voice):
+    """Qwen3-TTS through Agentora's shared speech service, which loads the model under a GPU-broker lease
+    and unloads it when idle. Same model, seed and voice description (sent as "instructions") as the old
+    local tts_server.py, so Jim sounds the same. Each clip comes back whole, so replies are spoken
+    sentence by sentence (the next one is made while the current one plays). If the service can't be
+    reached, it starts the local Qwen3-TTS server instead and says so."""
+
+    streaming = True
+
+    def __init__(self, url, instruct, make_local, device, pitch, intonation, echo, grit,
+                 lip_offset, face):
+        self.url, self.instruct, self.gentle = url.rstrip("/"), instruct, False
+        self.make_local, self.local = make_local, None
+        self.intonation, self.echo, self.grit = intonation, echo, grit
+        self.device, self.lip_offset, self.face = device, lip_offset, face
+        self.rate = 24000
+        self.play_rate = int(self.rate * pitch)
+        if not speech_service_up(self.url):
+            self.use_local(f"speech service not reachable at {self.url}")
+        self.warm()
+
+    def use_local(self, why):
+        print(f"[voice] {why}: starting the local Qwen3-TTS server instead (takes a minute)",
+              file=sys.stderr)
+        self.local = self.make_local()
+
+    def speak(self, text, timeout=60):
+        import urllib.request
+        body = json.dumps({"input": text, "voice": "jack", "response_format": "pcm",
+                           "instructions": JACK_GENTLE_VOICE if self.gentle else self.instruct}).encode()
+        req = urllib.request.Request(self.url + "/v1/audio/speech", body,
+                                     {"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:   # 16-bit mono PCM at 24 kHz
+            return np.frombuffer(r.read(), "<i2").astype(np.float32) / 32768
+
+    def raw_tts(self, text):
+        text = clean_for_tts(text)
+        if not text:
+            return np.zeros(0, np.float32)
+        if self.local is None:
+            try:
+                return trim_clip(self.speak(text), self.rate)
+            except Exception as e:
+                self.use_local(f"speech service failed ({type(e).__name__}: {e})")
+        self.local.gentle = self.gentle
+        return self.local.raw_tts(text)
+
+    def warm(self):
+        """Ask the service to load the voice now (one short word), so the next reply is fast. It
+        unloads after 2 idle minutes, and reloading takes about 8 s."""
+        if self.local is None:
+            try:
+                self.speak("Hi.", timeout=90)
+            except Exception:
+                pass
+
+
 class ServerVoice(Voice):
     """A heavier, natural-sounding TTS engine running in tts_server.py (its own venv),
     started here.
@@ -1011,8 +1192,7 @@ class ServerVoice(Voice):
         import urllib.request
         self.engine, self.model, self.exaggeration = engine, model, exaggeration
         self.instruct, self.gentle = instruct, False
-        self.streaming = engine == "chatterbox"   # sentence-by-sentence mode
-        self.chunked = engine == "qwen"           # whole reply, streamed in chunks
+        self.streaming = True                     # sentence by sentence
         self.url = f"http://127.0.0.1:{port}"
         self.server = None
         try:
@@ -1020,11 +1200,8 @@ class ServerVoice(Voice):
         except OSError:
             cmd = [f"{TTS_VENVS[engine]}/bin/python", "tts_server.py", "--engine", engine,
                    "--ref", ref, "--port", str(port)] + (["--model", model] if model else [])
-            # Each TTS venv brings its own CUDA libraries; don't leak ours (run.sh adds
-            # CUDA 12 libs for Whisper, which break the CUDA 13 build Qwen3-TTS uses).
-            env = {k: v for k, v in os.environ.items() if k != "LD_LIBRARY_PATH"}
             self.server = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                                           stderr=subprocess.DEVNULL, env=env)
+                                           stderr=subprocess.DEVNULL)
             atexit.register(self.server.terminate)
             for _ in range(600):
                 if self.server.poll() is not None:
@@ -1063,26 +1240,7 @@ class ServerVoice(Voice):
         with urllib.request.urlopen(req, timeout=120) as resp:
             self.rate = int(resp.headers["X-Sample-Rate"])
             audio = np.frombuffer(resp.read(), np.float32).copy()
-        # Trim the model's leading/trailing silence, then leave a natural pause.
-        loud = np.nonzero(np.abs(audio) > 0.01 * (np.max(np.abs(audio)) + 1e-9))[0]
-        if len(loud):
-            pad = int(0.04 * self.rate)
-            audio = audio[max(0, loud[0] - pad):loud[-1] + pad]
-        return np.concatenate([audio, np.zeros(int(0.15 * self.rate), np.float32)])
-
-    def stream_chunks(self, text):
-        """Yield audio chunks for the whole text as the server generates them."""
-        import struct
-        import urllib.request
-        text = self.clean(text)
-        if not text:
-            return
-        req = urllib.request.Request(self.url + "/stream", self.request_body(text),
-                                     {"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            while (n := struct.unpack("<I", resp.read(4))[0]):
-                chunk = np.frombuffer(resp.read(n), np.float32)
-                yield (chunk * 0.9 / max(0.9, float(np.max(np.abs(chunk))))).astype(np.float32)
+        return trim_clip(audio, self.rate)
 
 
 # ------------------------------------------------------------------- main loop
@@ -1100,8 +1258,14 @@ def main():
                    help="amplification applied on the WLED before streaming its mic")
     p.add_argument("--speaker", default="default", help="ALSA playback device (aplay -L)")
     p.add_argument("--tts", default="qwen", choices=["qwen", "chatterbox", "kokoro"],
-                   help="qwen = Qwen3-TTS voice design (default, most natural); chatterbox = "
-                        "copies --voice-ref; kokoro = lightest and fastest")
+                   help="qwen = Qwen3-TTS voice design via the speech service (default, most "
+                        "natural); chatterbox = copies --voice-ref; kokoro = lightest and fastest")
+    p.add_argument("--speech-url", default="http://127.0.0.1:7895",
+                   help="Agentora's shared speech service (Qwen3-TTS voice + Whisper listening, "
+                        "sharing the GPU through its broker). If it's down, Jim falls back to "
+                        "loading his own copies.")
+    p.add_argument("--local-whisper", action="store_true",
+                   help="run Whisper in this process instead of using the speech service")
     p.add_argument("--voice-design", default=JACK_VOICE,
                    help="Qwen3-TTS: describe Jim's voice in words")
     p.add_argument("--tts-model", default=None,
@@ -1196,11 +1360,19 @@ def main():
     for k, v in defaults.items():
         if getattr(args, k) is None:
             setattr(args, k, v)
-    if args.tts in ("qwen", "chatterbox"):
-        print(f"Loading voice ({args.tts}; the first run downloads the model)...")
-        voice = ServerVoice(args.tts, args.tts_model, args.voice_ref, args.voice_design,
-                            args.tts_port, args.exaggeration, args.speaker, args.pitch,
-                            args.intonation, args.echo, args.grit, args.lip_offset, face)
+    def local_server_voice(engine):
+        return ServerVoice(engine, args.tts_model, args.voice_ref, args.voice_design,
+                           args.tts_port, args.exaggeration, args.speaker, args.pitch,
+                           args.intonation, args.echo, args.grit, args.lip_offset, face)
+
+    if args.tts == "qwen":
+        print(f"Loading voice (Qwen3-TTS via the speech service at {args.speech_url})...")
+        voice = SpeechServiceVoice(args.speech_url, args.voice_design,
+                                   lambda: local_server_voice("qwen"), args.speaker, args.pitch,
+                                   args.intonation, args.echo, args.grit, args.lip_offset, face)
+    elif chatter:
+        print("Loading voice (Chatterbox; the first run downloads the model)...")
+        voice = local_server_voice("chatterbox")
     else:
         print("Loading voice (Kokoro)...")
         voice = Voice(args.voice, args.speaker, args.pitch, args.speed, args.intonation,
@@ -1248,26 +1420,13 @@ def main():
         return camera.latest() if camera else None
 
     def respond(text):
-        if getattr(voice, "chunked", False):
-            # Qwen3-TTS: get the whole reply, then stream it as one natural take.
-            face.state = "thinking"
-            t0 = time.time()
-            reply = " ".join(s.strip() for s in brain.reply_sentences(text, see())).strip()
-            voice.gentle = brain.gentle  # softer voice for a scared kid
-            print(f"  🎃 {reply}")
-
-            def started():
-                face.state = "talking"
-                print(f"     (started talking after {time.time() - t0:.2f}s)")
-
-            voice.play_stream(voice.stream_chunks(reply), on_start=started)
-            return
         if voice.streaming:
             face.state = "thinking"
             t0 = time.time()
 
             def sentences():
                 for s in brain.reply_sentences(text, see()):
+                    voice.gentle = brain.gentle  # softer voice for a scared kid
                     print(f"  🎃 {s}")
                     yield s
 
@@ -1303,8 +1462,19 @@ def main():
     greeting_audio = {g: voice.synth(g) for g in GREETINGS}
     greetings, goodbyes = shuffled_cycle(GREETINGS), shuffled_cycle(GOODBYES)
 
-    print("Loading speech recognition...")
-    ears = Ears(args.whisper)
+    if args.local_whisper:
+        print("Loading speech recognition (Whisper in this process)...")
+        ears = LocalEars(args.whisper)
+    else:
+        print(f"Speech recognition: Whisper via the speech service at {args.speech_url}")
+        ears = ServiceEars(args.speech_url, args.whisper)
+        ears.warm()
+
+    def warm_up_speech():
+        """Someone's around: get the shared voice and ears loaded before Jim needs them (the
+        service unloads them after 2 quiet minutes; reloading the voice takes about 8 s)."""
+        threading.Thread(target=lambda: (voice.warm() if hasattr(voice, "warm") else None,
+                                         ears.warm()), daemon=True).start()
 
     noises = queue.Queue()
 
@@ -1348,10 +1518,7 @@ def main():
         face.state = "talking"
         if greeting:
             print(f"  🎃 {greeting}   (roasting what he sees)")
-            if getattr(voice, "chunked", False):
-                voice.play_stream(voice.stream_chunks(greeting))
-            else:
-                voice.say(greeting)
+            voice.say(greeting)
         else:  # nobody visible, no camera, or too slow: a pre-written greeting
             greeting = next(greetings)
             print(f"  🎃 {greeting}")
@@ -1409,6 +1576,7 @@ def main():
                 mode, eyes_since = "eyes", time.time()
                 face.state = "eyes"
                 print("👀 Something stirs... (eyes on, waiting for a second noise)")
+                warm_up_speech()
             else:
                 wake_up()
                 mode, last_heard = "awake", time.time()

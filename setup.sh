@@ -12,7 +12,7 @@ uv pip install --python .venv anthropic faster-whisper numpy kokoro-onnx pyworld
   nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*" nvidia-cuda-runtime-cu12 \
   nvidia-cufft-cu12 nvidia-curand-cu12 nvidia-cuda-nvrtc-cu12
 
-echo "== Qwen3-TTS voice (default)"
+echo "== Qwen3-TTS voice (fallback: normally Jim uses Agentora's speech service on :7895)"
 uv venv --python 3.12 .venv-qwentts
 uv pip install --python .venv-qwentts faster-qwen3-tts "qwen-tts-hf<0.2,>=0.1.1.post1" \
   "transformers==5.15.1" "setuptools<81"
@@ -27,5 +27,6 @@ base=https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v
 [ -f voices/kokoro-v1.0.onnx ] || curl -L -o voices/kokoro-v1.0.onnx "$base/kokoro-v1.0.onnx"
 [ -f voices/voices-v1.0.bin ] || curl -L -o voices/voices-v1.0.bin "$base/voices-v1.0.bin"
 
-echo "Done. Qwen3-TTS and Whisper models download automatically on first run."
+echo "Done. Jim normally uses Agentora's speech service (http://127.0.0.1:7895) for his voice and"
+echo "hearing; the local copies above are only used when it is unreachable."
 echo "Start Jim with: ./start.sh"

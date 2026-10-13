@@ -10,14 +10,17 @@ jack-o'-lantern. Don't call him Jack.)
 
 Listen to him: [`samples/jim_demo.wav`](samples/jim_demo.wav)
 
-Everything runs locally on one PC with an NVIDIA GPU. No cloud services are needed.
+Everything runs locally on one PC with an NVIDIA GPU. No cloud services are needed. Speech
+(Jim's voice and his hearing) comes from the machine's shared
+[Agentora speech service](#speech-agentoras-shared-service), which takes turns on the GPU with
+the other AI tools.
 
 ## How it works
 
 ```
-WLED mic ──UDP──▶ voice detection ─▶ Whisper (speech-to-text) ─▶ Ollama LLM (Jim's personality)
+WLED mic ──UDP──▶ voice detection ─▶ Whisper (speech service) ─▶ Ollama LLM (Jim's personality)
                                                                         │
-WLED LED curtain ◀──UDP── face animation + lip sync ◀── Qwen3-TTS (voice) ◀┘
+WLED LED curtain ◀──UDP── face animation + lip sync ◀── Qwen3-TTS (speech service) ◀┘
 ```
 
 - **Face:** a 20×12 LED matrix (a WLED "curtain") shows a carved pumpkin face, driven with
@@ -29,9 +32,28 @@ WLED LED curtain ◀──UDP── face animation + lip sync ◀── Qwen3-TT
 - **Brain:** a local Ollama model (`qwen3.5:9b` by default) playing Jim, a furious, over-dramatic
   pumpkin who roasts costumes and tells terrible dad jokes. The Claude API is optional
   (`--brain claude`).
-- **Voice:** Qwen3-TTS voice design (the voice is described in words) with the
-  [faster-qwen3-tts](https://github.com/andimarafioti/faster-qwen3-tts) speed-up, streamed so
-  Jim starts talking about one second after a kid stops. Chatterbox and Kokoro are alternatives.
+- **Voice:** Qwen3-TTS voice design (the voice is described in words), from Agentora's shared
+  speech service. Replies are spoken sentence by sentence, so Jim starts talking about one second
+  after a kid stops. Chatterbox and Kokoro are alternatives.
+
+### Speech: Agentora's shared service
+
+Jim doesn't load his own speech models any more. He uses the machine's shared Agentora speech
+service (`agentora-speech`, `http://127.0.0.1:7895`, OpenAI-compatible):
+
+- **Voice:** `POST /v1/audio/speech` with Jim's voice description as `instructions`. It's the
+  same model and seed as before (`Qwen3-TTS-12Hz-1.7B-VoiceDesign`, seed 1234), so he sounds
+  the same; the gentle voice is just another description.
+- **Hearing:** `POST /v1/audio/transcriptions` (faster-whisper `small.en`). Each phrase goes up
+  as a 16 kHz WAV.
+- **Sharing the GPU:** the service loads both models under GPU-broker leases (`speech` ~5.5 GB,
+  `speech-ears` ~1.2 GB), so they take turns with the radio, Hermes and ComfyUI. It unloads them
+  after 2 idle minutes.
+- **Warm-ups:** Jim sends a tiny warm-up request at startup and whenever the first noise lights
+  his eyes, so the voice (about 8 s to reload) is ready by the time he talks.
+- **Fallback:** if the service can't be reached, Jim says so in his log and loads his own copies
+  (the local Qwen3-TTS server in `.venv-qwentts`, and Whisper in-process), so he keeps working.
+  `--local-whisper` forces in-process Whisper.
 
 ### Kid safety
 
@@ -50,7 +72,8 @@ What I used:
 - **Controller:** [ESP32 WLED LED Strip Controller, 4 channel outputs, 15 A fuse](https://www.amazon.com/dp/B0F8NRG27V),
   running WLED with AudioReactive and a PDM microphone. Its other outputs drive three extra
   30-LED strips that glow along with Jim's voice.
-- **PC:** an NVIDIA GPU (tested on an RTX 4090; Jim uses about 12 GB of video memory).
+- **PC:** an NVIDIA GPU (tested on an RTX 4090). Jim's chat model takes about 6.7 GB; the shared
+  speech service adds about 6.7 GB while it's loaded.
 - **Speaker:** anything the PC can play through, placed near the pumpkin.
 
 ## Setup
@@ -64,6 +87,8 @@ What I used:
    ```bash
    ./setup.sh
    ```
+   Jim expects Agentora's speech service on `http://127.0.0.1:7895` (`systemctl --user status
+   agentora-speech`). Without it, he falls back to the local copies `setup.sh` installs.
 3. Flash the [firmware patch](#firmware-patch) to your WLED controller (or use `--mic default`).
 4. Set your WLED's IP address with `--wled` (the default is `10.0.1.159`), then start Jim:
    ```bash
@@ -82,7 +107,9 @@ What I used:
 | `./start.sh --face-only` | Cycle through the LED animations |
 | `./start.sh --house "Two pieces of candy each!"` | Tell Jim about your house rules |
 | `./start.sh --voice-design "..."` | Describe a different voice |
-| `./start.sh --tts chatterbox` / `--tts kokoro` | Use a different voice engine |
+| `./start.sh --tts chatterbox` / `--tts kokoro` | Use a different voice engine (these run locally) |
+| `./start.sh --speech-url http://host:7895` | Use a speech service somewhere else |
+| `./start.sh --local-whisper` | Run Whisper in Jim's own process instead of the speech service |
 | `./start.sh --ollama-model qwen3.6:27b` | Smarter chat model (needs about 11 GB more video memory) |
 | `./start.sh --brain claude` | Use the Claude API instead of Ollama (asks for an API key) |
 
@@ -116,8 +143,8 @@ WLED is licensed under the EUPL-1.2, and the patch and prebuilt image are derive
 | File | Purpose |
 |---|---|
 | `pumpkin.py` | Jim: LEDs, mic, wake-up logic, speech recognition, personality, voice playback |
-| `tts_server.py` | Small local TTS server for Qwen3-TTS / Chatterbox (each in its own venv) |
-| `start.sh` / `run.sh` | Launchers (`run.sh` sets up the CUDA libraries) |
+| `tts_server.py` | Local TTS server for Chatterbox, and the Qwen3-TTS fallback when the speech service is down |
+| `start.sh` / `run.sh` | Launchers |
 | `setup.sh` | Creates the Python environments and downloads models |
 | `voices/jack_reference.wav` | Reference voice for the Chatterbox engine (generated, not a real person) |
 | `firmware/` | WLED mic-streaming patch and prebuilt firmware |
