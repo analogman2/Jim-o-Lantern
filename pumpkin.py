@@ -327,7 +327,7 @@ class Mic(threading.Thread):
         in_speech = False
         fdur = self.frame / self.rate
         last_print = 0.0
-        last_loud = 0.0
+        last_loud, onset_frames = 0.0, 0
         for pcm in self.frames():
             self.in_speech = in_speech
             if self.muted.is_set():
@@ -338,7 +338,12 @@ class Mic(threading.Thread):
             loud = rms > thresh
             if loud:
                 now = time.time()
-                if now - last_loud > 0.5 and self.on_noise:  # new sound after a quiet gap
+                if now - last_loud > 0.5:  # a new sound after a quiet gap
+                    onset_frames = 0
+                onset_frames += 1
+                # it only counts as a "noise" once it has stayed loud for ~0.1 s, so clicks,
+                # taps and bumps don't wake Jim
+                if onset_frames == 3 and self.on_noise:
                     self.on_noise()
                 last_loud = now
             if self.debug_levels and time.time() - last_print > 0.25:
@@ -1309,10 +1314,10 @@ def main():
                    help="Claude effort level (low = fastest replies)")
     p.add_argument("--house", default="", help='extra context, e.g. "Candy bowl is by the '
                    'door, two pieces each."')
-    p.add_argument("--vad-ratio", type=float, default=3.0,
+    p.add_argument("--vad-ratio", type=float, default=4.0,
                    help="sound must be this many times louder than background noise")
     p.add_argument("--min-rms", type=float, default=None,
-                   help="absolute minimum loudness (default 150 for wled mic, 300 for ALSA)")
+                   help="absolute minimum loudness (default 500 for wled mic, 300 for ALSA)")
     p.add_argument("--levels", action="store_true",
                    help="print live mic levels (for tuning --vad-ratio / --min-rms)")
     p.add_argument("--silence", type=float, default=0.8,
@@ -1500,7 +1505,7 @@ def main():
             face.state = "listening"
 
     if args.min_rms is None:
-        args.min_rms = 150 if args.mic == "wled" else 300
+        args.min_rms = 500 if args.mic == "wled" else 300
     source = wled_source(args.wled, args.wled_gain) if args.mic == "wled" else alsa_source(args.mic)
     mic = Mic(source, args.vad_ratio, args.min_rms, args.silence, on_speech_start,
               on_noise=lambda: noises.put(time.time()))
