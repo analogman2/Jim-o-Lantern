@@ -1328,9 +1328,24 @@ class ServerVoice(Voice):
 
 # ------------------------------------------------------------------- main loop
 
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jim.toml")
+
+
+def load_config(path=CONFIG_FILE):
+    """This machine's settings from jim.toml (see jim.example.toml); {} if there isn't one."""
+    import tomllib
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except FileNotFoundError:
+        return {}
+    except tomllib.TOMLDecodeError as e:
+        sys.exit(f"{path} has a mistake in it: {e}")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--wled", default="10.0.1.159", help="WLED IP address")
+    p.add_argument("--wled", default=None, help="WLED IP address (usually set in jim.toml)")
     p.add_argument("--brightness", type=float, default=0.7, help="0..1 overall LED brightness")
     p.add_argument("--flip-x", action="store_true", help="mirror the face left/right")
     p.add_argument("--flip-y", action="store_true", help="flip the face upside down")
@@ -1418,7 +1433,18 @@ def main():
     p.add_argument("--camera-width", type=int, default=768, help="width of frames sent to the AI")
     p.add_argument("--type", action="store_true", help="type instead of using the mic (testing)")
     p.add_argument("--face-only", action="store_true", help="just animate the face (LED test)")
+    # jim.toml supplies the defaults; anything on the command line still wins.
+    config = load_config()
+    options = {a.dest for a in p._actions}
+    settings = {k: v for k, v in config.items() if not isinstance(v, dict)}
+    unknown = sorted(k for k in settings if k not in options)
+    if unknown:
+        print(f"[config] jim.toml: ignoring unknown setting(s): {', '.join(unknown)}", file=sys.stderr)
+    p.set_defaults(**{k: v for k, v in settings.items() if k in options})
     args = p.parse_args()
+    if not args.wled:
+        sys.exit("Set the WLED controller's address: wled = \"...\" in jim.toml "
+                 "(copy jim.example.toml), or pass --wled.")
 
     face = Face(Wled(args.wled, args.brightness, args.flip_x, args.flip_y))
     face.start()

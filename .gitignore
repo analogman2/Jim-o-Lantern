@@ -24,5 +24,5 @@ samples/*.wav
 # Pre-rendered greeting audio
 cache/
 
-# This machine's start options
-jim.args
+# This machine's settings (copy jim.example.toml)
+jim.toml

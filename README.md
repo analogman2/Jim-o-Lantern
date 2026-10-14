@@ -90,9 +90,14 @@ What I used:
    Jim expects Agentora's speech service on `http://127.0.0.1:7895` (`systemctl --user status
    agentora-speech`). Without it, he falls back to the local copies `setup.sh` installs.
 3. Flash the [firmware patch](#firmware-patch) to your WLED controller (or use `--mic default`).
-4. Set your WLED's IP address with `--wled` (the default is `10.0.1.159`), then start Jim:
+4. Copy the settings file and put in your WLED controller's address (and your mic, speaker and
+   camera if you use them). `jim.toml` isn't committed, so your addresses stay private:
    ```bash
-   ./start.sh --wled 192.168.1.50
+   cp jim.example.toml jim.toml
+   ```
+5. Start Jim:
+   ```bash
+   ./start.sh
    ```
 
 ## Using Jim
@@ -116,9 +121,14 @@ What I used:
 | `./start.sh --ollama-model qwen3.6:27b` | Smarter chat model (needs about 11 GB more video memory) |
 | `./start.sh --brain claude` | Use the Claude API instead of Ollama (asks for an API key) |
 
-Options you always want on this machine can go in a `jim.args` file next to `start.sh` (one or
-more per line, `#` for comments), for example `--mic plughw:CARD=Camera,DEV=0 --keep-loaded`. It's
-not committed. The 12 greetings are recorded once and saved in `cache/`, so restarts are quick.
+**Settings:** `jim.toml` holds this machine's settings: the WLED address, mic, speaker,
+service URLs and camera. Any option above can go there with underscores instead of dashes
+(`--min-rms 800` becomes `min_rms = 800`); options on the command line still win.
+`jim.example.toml` lists them. The camera password is never stored there: `./set_camera.sh`
+asks for it, using the camera's `ip` and `user` from `jim.toml`, and saves the full address to
+`~/.config/jim/rtsp`, readable only by you.
+
+The 12 greetings are recorded once and saved in `cache/`, so restarts are quick.
 
 Run `./run.sh --help` for every option. Jim's personality, greetings and goodbyes are at the top
 of [`pumpkin.py`](pumpkin.py) (`SYSTEM_PROMPT`, `GREETINGS`, `GOODBYES`).

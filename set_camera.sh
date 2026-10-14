@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 # Save Jim's camera address (with its password) to a private file outside the repo.
-# Usage: ./set_camera.sh <camera-ip> <user> [stream-path]
-# The default stream path suits Reolink cameras; other brands use other paths.
+# Usage: ./set_camera.sh [camera-ip] [user] [stream-path]
+# Anything left out comes from the [camera] section of jim.toml.
 set -euo pipefail
-if [ $# -lt 2 ]; then
-  echo "Usage: $0 <camera-ip> <user> [stream-path]   (e.g. $0 192.168.1.20 admin)" >&2
+cd "$(dirname "$0")"
+cfg() {
+  .venv/bin/python -c "
+import tomllib
+try: print(tomllib.load(open('jim.toml', 'rb')).get('camera', {}).get('$1', ''))
+except Exception: print('')"
+}
+ip=${1:-$(cfg ip)}
+user=${2:-$(cfg user)}
+path=${3:-$(cfg path)}
+path=${path:-h264Preview_01_main}   # Reolink main stream; other brands differ
+if [ -z "$ip" ] || [ -z "$user" ]; then
+  echo "Set ip and user under [camera] in jim.toml, or run: $0 <camera-ip> <user> [stream-path]" >&2
   exit 1
 fi
-ip=$1
-user=$2
-path=${3:-h264Preview_01_main}
 read -rsp "Password for $user@$ip (typing is hidden): " pass
 echo
 mkdir -p ~/.config/jim
