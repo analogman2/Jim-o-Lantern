@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Jim's all-in-one outdoor box: WLED controller, Raspberry Pi 3B + amp HAT, USB mic array,
+"""Jim's all-in-one outdoor box: WLED controller, Raspberry Pi 4B + amp HAT, USB mic array,
 speaker, and optional Pi camera, sitting on top of a 1 x 1 inch post.
 
 Parametric: change the numbers below, then run
@@ -29,7 +29,7 @@ INSERT_M3, INSERT_M25, INSERT_M4 = 4.0, 3.6, 5.6
 CLEAR_M3 = 3.4
 
 # ---------------------------------------------------------------- parts (MEASURE = check yours)
-PI_W, PI_D = 85.0, 56.0                         # Raspberry Pi 3B board
+PI_W, PI_D = 85.0, 56.0                         # Raspberry Pi 4B board (same holes as 3B)
 PI_HOLES = [(3.5, 3.5), (61.5, 3.5), (3.5, 52.5), (61.5, 52.5)]
 PI_STANDOFF = 6.0
 
@@ -163,9 +163,14 @@ def body_plain():
     # floor: cable glands, vents, and insert bosses for the post socket
     for gx, gy in GLANDS:
         b -= at(gx, gy, -1, Cylinder(GLAND_HOLE / 2, FLOOR + 2, align=CEN))
-    for i in range(6):   # vent slots under the Pi
+    for i in range(6):   # vent slots under the Pi: cool air in...
         b -= at(PI_POS[0] + 12 + i * 12, PI_POS[1] + 8, -1,
                 Box(4, PI_D - 16, FLOOR + 2, align=(Align.CENTER, Align.MIN, Align.MIN)))
+    # ...and warm air out high on the back wall behind the Pi (a Pi 4 runs warm). Narrow
+    # horizontal slots, just under the lid's drip skirt so rain mostly can't reach them.
+    for i in range(4):
+        b -= at(PI_POS[0] + 6, D - WALL - 1, H - SKIRT - 6 - i * 6,
+                Box(PI_W - 12, WALL + 2, 2.5, align=(Align.MIN, Align.MIN, Align.CENTER)))
     h = SOCKET_SPACING / 2
     for dx, dy in [(-h, -h), (h, -h), (-h, h), (h, h)]:
         x, y = W / 2 + dx, SOCKET_Y + dy

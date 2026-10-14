@@ -46,7 +46,8 @@ These are placeholders in `jim_case.py` (marked `MEASURE`):
 | Have | Part |
 |---|---|
 | ✅ | WLED ESP32 controller (drives the 5 V LED net and strips) |
-| ✅ | Raspberry Pi 3B + amp HAT |
+| ✅ | Raspberry Pi 4B + amp HAT |
+| ⬜ | Stick-on heatsinks for the Pi 4 (CPU and USB chip) |
 | ✅ | 5 V LED net (240 LEDs) + 3 × 30-LED strips |
 | ⬜ | Mic: ReSpeaker XVF3800 USB 4-mic array (USB to the Pi) |
 | ⬜ | Speaker: 2" (50 mm) full-range driver, 4 Ω, 3–5 W (match your amp HAT) |
@@ -55,7 +56,7 @@ These are placeholders in `jim_case.py` (marked `MEASURE`):
 | ⬜ | 14–16 AWG two-wire cable for 5 V up the post |
 | ⬜ | 3–4 × PG7 cable glands (5 V in, LED net, strips) |
 | ⬜ | Heat-set inserts: 14 × M3, 12 × M2.5, 1 × M4, plus matching screws and an M4 thumbscrew |
-| ⬜ | Inline fuse holder + 3 A fuse (Pi feed); lever connectors (e.g. Wago 221) for the 5 V split |
+| ⬜ | Inline fuse holder + 4 A fuse (Pi feed); lever connectors (e.g. Wago 221) for the 5 V split |
 | ⬜ | Speaker cloth or fine mesh (behind the grille and mic holes), foam gasket tape |
 
 ## Power and wiring
@@ -67,16 +68,24 @@ These are placeholders in `jim_case.py` (marked `MEASURE`):
                        │  5V split (lever connectors)                               │
                        │   ├── WLED controller power in ──▶ LED net + 3 strips       │
                        │   │      (WLED limits LEDs to 2 A)    (via cable glands)   │
-                       │   └── 3 A fuse ──▶ Pi 3B 5V + GND pins ──▶ amp HAT ──▶ speaker │
+                       │   └── 4 A fuse ──▶ Pi 4B 5V + GND pins ──▶ amp HAT ──▶ speaker │
                        │                     ├── USB: ReSpeaker mic (under the lid)   │
                        │                     └── ribbon: Camera Module 3 (front window)│
                        └────────────────────────────────────────────────────────────┘
 ```
 
-- About 4–5 A peak in total (LEDs capped at 2 A by WLED), so a 10 A supply has headroom.
+- About 5–6 A peak in total (LEDs capped at 2 A by WLED; the Pi 4 with mic and camera up to about
+  2 A; the amp about 1 A), so a 10 A supply has headroom.
 - Use thick wire up the post: 5 V loses voltage quickly over thin wire, and the Pi resets if it
   sags.
-- Feeding the Pi through its 5 V GPIO pins bypasses its own fuse, so keep the 3 A inline fuse.
+- Feeding the Pi through its 5 V GPIO pins bypasses its USB-C input protection, so keep the 4 A
+  inline fuse. The Pi 4 is picky about voltage: if it shows a low-voltage warning, use thicker
+  wire up the post or set the supply slightly high (5.1–5.2 V).
+- **Wi-Fi:** the Pi 4 can use 5 GHz, which keeps its audio and camera traffic off the 2.4 GHz
+  band the WLED controller uses.
+- **Heat:** the Pi 4 runs warmer than a 3B. The box has vents under it and exhaust slots high on
+  the back wall; add stick-on heatsinks. On a cool October night that's plenty for passing audio
+  and camera along.
 - All grounds are shared: supply, controller and Pi.
 
 ## Assembly
