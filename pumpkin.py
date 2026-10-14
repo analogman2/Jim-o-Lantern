@@ -680,7 +680,8 @@ GOODBYES = [
 # Code-level safety switch: if a kid sounds scared or upset, force gentle mode for the
 # rest of the conversation instead of trusting the model to notice.
 UPSET_RE = re.compile(
-    r"\b(scared|scary|scare me|afraid|frightened|terrified|cry|crying|cried|"
+    r"\b(scared|(too|so|really|very) scary|you'?re scary|that'?s scary|scare me|afraid|"
+    r"frightened|terrified|cry|crying|cried|"
     r"nightmares?|don'?t like (you|this|it)|go home|stop (it|yelling|that)|"
     r"leave me alone|you'?re mean|so mean|too loud|help me)\b", re.I)
 
@@ -715,6 +716,7 @@ class Brain:
         self.history = []
 
     gentle = False
+    max_words = 20  # stop after the sentence that reaches this many words (--max-words)
 
     def system_prompt(self):
         return self.system + (GENTLE_OVERRIDE if self.gentle else "")
@@ -786,18 +788,24 @@ class Brain:
                 betas=["server-side-fallback-2026-07-01"],
                 fallbacks="default",
             ) as stream:
+                stopped = False
                 for chunk in stream.text_stream:
                     buf += chunk
                     parts = re.split(r"(?<=[.!?])\s+", buf)
                     for sentence in parts[:-1]:
                         full += sentence + " "
                         yield sentence
+                        if len(full.split()) >= self.max_words:  # leave kids room to answer
+                            stopped = True
+                            break
+                    if stopped:
+                        break
                     buf = parts[-1]
-                final = stream.get_final_message()
-            if buf.strip():
+                final = None if stopped else stream.get_final_message()
+            if buf.strip() and not stopped:
                 full += buf
                 yield buf
-            if final.stop_reason == "refusal" and not full.strip():
+            if final is not None and final.stop_reason == "refusal" and not full.strip():
                 full = "Bah! Let's talk about candy instead. What's your favorite?"
                 yield full
         except self.anthropic.APIConnectionError as e:
@@ -827,6 +835,7 @@ class OllamaBrain:
         self.history = []
 
     gentle = False
+    max_words = 20  # stop after the sentence that reaches this many words (--max-words)
 
     def system_prompt(self):
         return self.system + (GENTLE_OVERRIDE if self.gentle else "")
@@ -906,7 +915,7 @@ class OllamaBrain:
         self.history = self.history[-30:]
         if self.history[0]["role"] != "user":
             self.history = self.history[1:]
-        full, buf = "", ""
+        full, buf, stopped = "", "", False
         try:
             with self._chat([{"role": "system", "content": self.system_prompt()}]
                             + self.messages_with_image(image)) as resp:
@@ -921,8 +930,13 @@ class OllamaBrain:
                     for sentence in parts[:-1]:
                         full += sentence + " "
                         yield sentence
+                        if len(full.split()) >= self.max_words:  # leave kids room to answer
+                            stopped = True
+                            break
+                    if stopped:
+                        break
                     buf = parts[-1]
-            if buf.strip():
+            if buf.strip() and not stopped:
                 full += buf
                 yield buf
         except Exception as e:  # never let one bad reply kill the pumpkin
@@ -955,19 +969,72 @@ def clean_for_tts(text, keep_tags=False):
     return re.sub(r"\s+", " ", text).strip()
 
 
+def band(x, rate, lo, hi):
+    """Band-pass filter by zeroing FFT bins outside lo..hi Hz (fine for one-off sound design)."""
+    spec = np.fft.rfft(x)
+    f = np.fft.rfftfreq(len(x), 1 / rate)
+    spec[(f < lo) | (f > hi)] = 0
+    return np.fft.irfft(spec, len(x))
+
+
 def make_rumble(rate, seconds):
-    """A low growl that builds, then a crash, matching the reveal animation."""
+    """The wake-up explosion, timed to the reveal animation: a rising whoosh while the eyes
+    sputter (0-0.6 s), a huge impact when the red strobe starts (0.6 s), a monster roar with a
+    screech through the strobe, then a rumbling, crackling tail as the face settles. Most of the
+    energy sits at 100 Hz-4 kHz, where small outdoor speakers are loud."""
+    rng = np.random.default_rng(13)  # the same scary sound every time
     n = int(rate * seconds)
     t = np.arange(n) / rate
-    brown = np.cumsum(np.random.randn(n))
-    brown -= np.convolve(brown, np.ones(rate // 50) / (rate // 50), "same")  # drop drift/DC
-    brown /= np.max(np.abs(brown)) + 1e-9
-    growl = np.sin(2 * np.pi * 45 * t + 4 * np.sin(2 * np.pi * 5 * t))
-    growl *= 0.6 + 0.4 * np.sin(2 * np.pi * 13 * t)
-    build = np.clip(t / 0.6, 0, 1) ** 2 * np.where(t < 0.6, 1.0, np.exp(-(t - 0.6) * 1.5))
-    crash = np.where(t >= 0.6, np.exp(-(t - 0.6) * 6), 0) * np.random.randn(n) * 0.6
-    out = (0.7 * brown + 0.6 * growl) * build + crash
-    return (out / np.max(np.abs(out)) * 0.95).astype(np.float32)
+    hit = 0.6
+    after = np.clip(t - hit, 0, None)
+    before = t < hit
+
+    # 1. rising whoosh: noise swept upward through a narrowing band, building to the hit
+    noise = rng.standard_normal(n)
+    riser = np.zeros(n)
+    edges = np.linspace(0, int(hit * rate), 13).astype(int)
+    for i in range(12):
+        a0, a1 = edges[i], edges[i + 1]
+        centre = 300 * (12 ** (i / 11))                      # 300 Hz -> 3.6 kHz
+        seg = band(noise[a0:a1 + 400], rate, centre * 0.7, centre * 1.4)[:a1 - a0]
+        riser[a0:a1] = seg * np.hanning(a1 - a0) ** 0.3
+    riser *= np.where(before, (t / hit) ** 2, 0)
+
+    # 2. impact: falling sub-boom, a noise blast, and a distorted crack
+    boom_f = 40 + 110 * np.exp(-after * 9)                  # 150 Hz dropping to 40 Hz
+    boom = np.sin(2 * np.pi * np.cumsum(boom_f) / rate) * np.exp(-after * 3.5) * ~before
+    blast = band(rng.standard_normal(n), rate, 80, 6000) * np.exp(-after * 9) * ~before
+    crack = np.tanh(rng.standard_normal(n) * 4) * np.exp(-after * 40) * ~before
+
+    # 3. monster roar: a buzzy growl (sawtooth, wobbling pitch) shaped by throat-like formants,
+    #    plus a rasp, swelling right after the hit and fading as the face settles
+    pitch = 85 + 12 * np.sin(2 * np.pi * 3.3 * t) + 25 * np.exp(-after * 2)
+    phase = np.cumsum(pitch) / rate
+    saw = 2 * (phase % 1) - 1
+    roar = sum(g * band(saw, rate, f * 0.8, f * 1.25) for f, g in ((350, 1.0), (900, 0.8), (2300, 0.4)))
+    roar += 0.35 * band(rng.standard_normal(n), rate, 400, 3000)
+    roar *= 0.7 + 0.3 * np.sin(2 * np.pi * 14 * t)          # throaty flutter
+    roar *= np.where(before, 0, np.clip(after / 0.08, 0, 1) * np.exp(-after * 1.1))
+    roar = np.tanh(roar * 3)
+
+    # 4. screech: a high, wavering glide on top of the roar
+    sf = 1700 - 700 * np.clip(after / 1.2, 0, 1) + 60 * np.sin(2 * np.pi * 7 * t)
+    screech = np.sin(2 * np.pi * np.cumsum(sf) / rate)
+    screech *= np.where(before, 0, np.clip((after - 0.05) / 0.1, 0, 1) * np.exp(-after * 2.2))
+
+    # 5. drone and fire crackle under everything
+    drone = band(rng.standard_normal(n), rate, 30, 200) * (0.3 + 0.7 * np.clip(t / hit, 0, 1))
+    pops = (rng.random(n) < 0.0015) * rng.standard_normal(n)
+    crackle = band(pops, rate, 1500, 8000) * 6
+
+    def norm(x):
+        return x / (np.max(np.abs(x)) + 1e-9)
+
+    mix = (0.55 * norm(riser) + 1.0 * norm(boom) + 0.7 * norm(blast) + 0.5 * norm(crack)
+           + 0.9 * norm(roar) + 0.18 * norm(screech) + 0.35 * norm(drone) + 0.25 * norm(crackle))
+    mix = np.tanh(norm(mix) * 3.0)                          # trailer-style loudness
+    fade = np.clip((seconds - t) / 0.25, 0, 1)              # don't end with a click
+    return (norm(mix * fade) * 0.98).astype(np.float32)
 
 
 class Voice:
@@ -1126,7 +1193,7 @@ def trim_clip(audio, rate):
     if len(loud):
         pad = int(0.04 * rate)
         audio = audio[max(0, loud[0] - pad):loud[-1] + pad]
-    return np.concatenate([audio, np.zeros(int(0.15 * rate), np.float32)])
+    return np.concatenate([audio, np.zeros(int(0.3 * rate), np.float32)])
 
 
 class SpeechServiceVoice(Voice):
@@ -1320,8 +1387,11 @@ def main():
                    help="absolute minimum loudness (default 500 for wled mic, 300 for ALSA)")
     p.add_argument("--levels", action="store_true",
                    help="print live mic levels (for tuning --vad-ratio / --min-rms)")
-    p.add_argument("--silence", type=float, default=0.8,
+    p.add_argument("--silence", type=float, default=1.5,
                    help="seconds of quiet that end an utterance")
+    p.add_argument("--max-words", type=int, default=20,
+                   help="cut Jim off after the sentence that reaches this many words, so kids "
+                        "get a turn")
     p.add_argument("--reset-after", type=float, default=40,
                    help="seconds of quiet before Jim goes back to sleep (dark)")
     p.add_argument("--eyes-timeout", type=float, default=30,
@@ -1407,6 +1477,7 @@ def main():
             sys.exit("No Anthropic API key set. Use ./start.sh (it asks for the key), or run:\n"
                      "  export ANTHROPIC_API_KEY=sk-ant-...")
         brain = Brain(args.model, args.effort, args.house)
+    brain.max_words = args.max_words
     if chatter and args.tts_model == "turbo":
         brain.system += ("\n\nYour voice can perform sound effects: you may put one of these "
                          "tags inline, at most once per reply: " +
