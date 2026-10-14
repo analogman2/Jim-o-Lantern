@@ -813,6 +813,8 @@ class Brain:
 class OllamaBrain:
     """Same interface as Brain, but talks to a local Ollama model. No API key needed."""
 
+    keep_alive = "60m"  # -1 (forever) with --keep-loaded
+
     def __init__(self, model, url, extra_prompt):
         self.model, self.url = model, url.rstrip("/")
         self.system = SYSTEM_PROMPT + (f"\n\nAbout this house tonight: {extra_prompt}"
@@ -842,7 +844,7 @@ class OllamaBrain:
         body = {
             "model": self.model, "messages": messages, "stream": stream,
             "think": False,          # qwen-style reasoning just adds latency here
-            "keep_alive": "60m",     # keep the model loaded on the GPU between kids
+            "keep_alive": self.keep_alive,  # how long Ollama keeps the model on the GPU
             "options": {"num_predict": max_tokens, "temperature": 0.8, "num_ctx": 4096},
         }
         if schema:
@@ -1266,6 +1268,9 @@ def main():
                         "loading his own copies.")
     p.add_argument("--local-whisper", action="store_true",
                    help="run Whisper in this process instead of using the speech service")
+    p.add_argument("--keep-loaded", action="store_true",
+                   help="keep the voice, ears and chat model loaded on the GPU (pings the speech "
+                        "service every 90 s so it never idles out; Ollama keeps the model forever)")
     p.add_argument("--voice-design", default=JACK_VOICE,
                    help="Qwen3-TTS: describe Jim's voice in words")
     p.add_argument("--tts-model", default=None,
@@ -1390,6 +1395,8 @@ def main():
 
     if args.brain == "ollama":
         brain = OllamaBrain(args.ollama_model, args.ollama_url, args.house)
+        if args.keep_loaded:
+            brain.keep_alive = -1  # forever
     else:
         if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
             sys.exit("No Anthropic API key set. Use ./start.sh (it asks for the key), or run:\n"
@@ -1469,6 +1476,16 @@ def main():
         print(f"Speech recognition: Whisper via the speech service at {args.speech_url}")
         ears = ServiceEars(args.speech_url, args.whisper)
         ears.warm()
+
+    if args.keep_loaded:
+        def keep_loaded():
+            while True:  # the service unloads after 120 s idle; stay just ahead of it
+                time.sleep(90)
+                if hasattr(voice, "warm"):
+                    voice.warm()
+                ears.warm()
+        threading.Thread(target=keep_loaded, daemon=True).start()
+        print("Keeping the voice, ears and chat model loaded (--keep-loaded).")
 
     def warm_up_speech():
         """Someone's around: get the shared voice and ears loaded before Jim needs them (the
