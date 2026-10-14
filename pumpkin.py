@@ -894,8 +894,17 @@ class OllamaBrain:
         return self.history[:-1] + [dict(self.history[-1],
                                          images=[base64.b64encode(image).decode()])]
 
+    def loaded(self):
+        import urllib.request
+        try:
+            with urllib.request.urlopen(f"{self.url}/api/ps", timeout=3) as r:
+                return any(m.get("name") == self.model for m in json.loads(r.read()).get("models", []))
+        except Exception:
+            return False
+
     def warm_up(self):
-        print(f"Loading {self.model} in Ollama...")
+        print(f"Chat model {self.model}: "
+              + ("already loaded in Ollama" if self.loaded() else "loading in Ollama..."))
         # include the system prompt so the slow first-time prompt processing happens now
         self._chat([{"role": "system", "content": self.system},
                     {"role": "user", "content": "hi"}], stream=False).read()
@@ -1341,8 +1350,8 @@ def main():
     p.add_argument("--local-whisper", action="store_true",
                    help="run Whisper in this process instead of using the speech service")
     p.add_argument("--keep-loaded", action="store_true",
-                   help="keep the voice, ears and chat model loaded on the GPU (pings the speech "
-                        "service every 90 s so it never idles out; Ollama keeps the model forever)")
+                   help="keep the voice, ears and chat model loaded on the GPU, also between "
+                        "runs, until ./keep_loaded.sh stop")
     p.add_argument("--voice-design", default=JACK_VOICE,
                    help="Qwen3-TTS: describe Jim's voice in words")
     p.add_argument("--tts-model", default=None,
@@ -1540,9 +1549,37 @@ def main():
             if text:
                 respond(text)
 
-    # Pre-render the wake-up sound and greetings so they play instantly.
+    # The wake-up sound, and the greetings pre-rendered so they play instantly. Greetings are
+    # cached on disk (keyed on the text and every voice setting), so restarts don't redo them.
     rumble = make_rumble(voice.play_rate, REVEAL_SECONDS)
-    greeting_audio = {g: voice.synth(g) for g in GREETINGS}
+    import hashlib
+    cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache", "greetings")
+    os.makedirs(cache_dir, exist_ok=True)
+    voice_id = json.dumps([args.tts, args.voice_design, args.voice, args.tts_model, args.voice_ref,
+                           args.pitch, args.intonation, args.echo, args.grit, args.speed,
+                           args.exaggeration])
+
+    def greeting_file(text):
+        return os.path.join(cache_dir, hashlib.sha1((voice_id + text).encode()).hexdigest() + ".npy")
+
+    greeting_audio = {}
+    for g in GREETINGS:
+        try:
+            greeting_audio[g] = np.load(greeting_file(g))
+        except (OSError, ValueError):
+            pass
+
+    def render_missing_greetings():
+        for g in GREETINGS:
+            if g not in greeting_audio:
+                audio = voice.synth(g)
+                np.save(greeting_file(g), audio)
+                greeting_audio[g] = audio
+
+    missing = len(GREETINGS) - len(greeting_audio)
+    if missing:
+        print(f"Recording {missing} greeting(s) in the background (saved for next time)...")
+        threading.Thread(target=render_missing_greetings, daemon=True).start()
     greetings, goodbyes = shuffled_cycle(GREETINGS), shuffled_cycle(GOODBYES)
 
     if args.local_whisper:
@@ -1554,14 +1591,11 @@ def main():
         ears.warm()
 
     if args.keep_loaded:
-        def keep_loaded():
-            while True:  # the service unloads after 120 s idle; stay just ahead of it
-                time.sleep(90)
-                if hasattr(voice, "warm"):
-                    voice.warm()
-                ears.warm()
-        threading.Thread(target=keep_loaded, daemon=True).start()
-        print("Keeping the voice, ears and chat model loaded (--keep-loaded).")
+        # A separate helper keeps the models warm even while Jim is stopped or restarting,
+        # until ./keep_loaded.sh stop.
+        env = dict(os.environ, JIM_SPEECH_URL=args.speech_url, JIM_OLLAMA_URL=args.ollama_url,
+                   JIM_OLLAMA_MODEL=args.ollama_model)
+        subprocess.run(["./keep_loaded.sh", "start"], env=env)
 
     def warm_up_speech():
         """Someone's around: get the shared voice and ears loaded before Jim needs them (the
@@ -1614,8 +1648,13 @@ def main():
             voice.say(greeting)
         else:  # nobody visible, no camera, or too slow: a pre-written greeting
             greeting = next(greetings)
+            for _ in range(len(GREETINGS)):  # prefer one that's already recorded
+                if greeting in greeting_audio:
+                    break
+                greeting = next(greetings)
             print(f"  🎃 {greeting}")
-            voice.play(greeting_audio[greeting])
+            voice.play(greeting_audio.get(greeting)
+                       if greeting in greeting_audio else voice.synth(greeting))
         brain.prime(greeting)
         face.state = "idle"
         time.sleep(0.3)  # let the speaker's echo die out before listening again

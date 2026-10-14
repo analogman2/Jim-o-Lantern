@@ -20,3 +20,9 @@ samples/*.wav
 
 # CAD environment
 .venv-cad/
+
+# Pre-rendered greeting audio
+cache/
+
+# This machine's start options
+jim.args
