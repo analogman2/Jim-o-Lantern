@@ -115,8 +115,7 @@ What I used:
 | `./start.sh --tts chatterbox` / `--tts kokoro` | Use a different voice engine (these run locally) |
 | `./start.sh --speech-url http://host:7895` | Use a speech service somewhere else |
 | `./start.sh --local-whisper` | Run Whisper in Jim's own process instead of the speech service |
-| `./start.sh --keep-loaded` | Keep the voice, ears and chat model loaded, also between runs |
-| `./keep_loaded.sh stop` | Let them unload again (`status` shows whether they're held) |
+| `./start.sh --keep-loaded` | Keep the voice, ears and chat model warm while Jim runs |
 | `./start.sh --max-words 15` / `--silence 2` | Shorter replies / wait longer for kids to finish |
 | `./start.sh --ollama-model qwen3.6:27b` | Smarter chat model (needs about 11 GB more video memory) |
 | `./start.sh --brain claude` | Use the Claude API instead of Ollama (asks for an API key) |
@@ -129,6 +128,10 @@ asks for it, using the camera's `ip` and `user` from `jim.toml`, and saves the f
 `~/.config/jim/rtsp`, readable only by you.
 
 The 12 greetings are recorded once and saved in `cache/`, so restarts are quick.
+
+**Jim only runs while you run him.** Nothing starts him automatically, and when he stops (Ctrl+C,
+closing the terminal, or a kill) he unloads his chat model from Ollama right away. The speech
+service drops the voice and ears on its own about 2 minutes later.
 
 Run `./run.sh --help` for every option. Jim's personality, greetings and goodbyes are at the top
 of [`pumpkin.py`](pumpkin.py) (`SYSTEM_PROMPT`, `GREETINGS`, `GOODBYES`).

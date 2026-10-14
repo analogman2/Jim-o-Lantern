@@ -42,7 +42,7 @@ mic ─▶ energy VAD (Mic) ─▶ Whisper ─▶ Ollama LLM (Jim) ─▶ Qwen3-
   - **Fallback:** local `tts_server.py` in `.venv-qwentts`, and in-process Whisper.
 - **Brain:** Ollama `qwen3.5:9b` (it has vision). `--brain claude` is optional.
 - **Start:** `./start.sh` (settings from `jim.toml`).
-  `./keep_loaded.sh start|stop|status` keeps the models warm between runs. The 12 greetings are
+  `--keep-loaded` keeps the models warm only while Jim runs. The 12 greetings are
   cached in `cache/greetings/`.
 
 ## Rules
@@ -71,7 +71,12 @@ mic ─▶ energy VAD (Mic) ─▶ Whisper ─▶ Ollama LLM (Jim) ─▶ Qwen3-
    - **Ollama's chat model loads outside the broker.** Mention it if it matters.
 5. **Don't modify `~/yue2-xpu-radio`.** If the speech service needs a change, describe it and the
    user will have the Agentora session do it.
-6. **The LED curtain and speaker are real and in the user's home.** Briefly driving the LEDs to
+6. **Jim runs only when the user starts him.** Don't start Jim, leave anything of his running,
+   or load his models (an Ollama request loads the chat model, which can push other users' models
+   off the GPU) unless the user asks. Check `nvidia-smi` and the broker first. When Jim stops he
+   must release everything: the chat model is unloaded on exit, and nothing may outlive his
+   process.
+7. **The LED curtain and speaker are real and in the user's home.** Briefly driving the LEDs to
    test is fine. Send test audio to the silent device (`--speaker null`), unless the user wants to
    hear it.
 

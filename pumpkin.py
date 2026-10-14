@@ -894,6 +894,19 @@ class OllamaBrain:
         return self.history[:-1] + [dict(self.history[-1],
                                          images=[base64.b64encode(image).decode()])]
 
+    def unload(self):
+        """Take the chat model off the GPU now (when Jim stops). Only if it's loaded: the
+        request must never cause a load."""
+        import urllib.request
+        if not self.loaded():
+            return
+        try:
+            req = urllib.request.Request(f"{self.url}/api/generate", json.dumps(
+                {"model": self.model, "keep_alive": 0}).encode(), {"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=10).read()
+        except Exception:
+            pass
+
     def loaded(self):
         import urllib.request
         try:
@@ -1365,8 +1378,8 @@ def main():
     p.add_argument("--local-whisper", action="store_true",
                    help="run Whisper in this process instead of using the speech service")
     p.add_argument("--keep-loaded", action="store_true",
-                   help="keep the voice, ears and chat model loaded on the GPU, also between "
-                        "runs, until ./keep_loaded.sh stop")
+                   help="keep the voice, ears and chat model loaded on the GPU while Jim runs "
+                        "(everything is released when he stops)")
     p.add_argument("--voice-design", default=JACK_VOICE,
                    help="Qwen3-TTS: describe Jim's voice in words")
     p.add_argument("--tts-model", default=None,
@@ -1527,6 +1540,8 @@ def main():
         brain.system += VISION_RULES
         print("Camera on: Jim can see costumes.")
     if args.brain == "ollama":
+        import atexit
+        atexit.register(brain.unload)  # nothing of Jim stays on the GPU after he stops
         try:
             brain.warm_up()  # after the prompt is final, so the slow first pass happens now
         except Exception as e:
@@ -1617,11 +1632,14 @@ def main():
         ears.warm()
 
     if args.keep_loaded:
-        # A separate helper keeps the models warm even while Jim is stopped or restarting,
-        # until ./keep_loaded.sh stop.
-        env = dict(os.environ, JIM_SPEECH_URL=args.speech_url, JIM_OLLAMA_URL=args.ollama_url,
-                   JIM_OLLAMA_MODEL=args.ollama_model)
-        subprocess.run(["./keep_loaded.sh", "start"], env=env)
+        def keep_loaded():
+            while True:  # the speech service unloads after 120 s idle; stay just ahead of it
+                time.sleep(90)
+                if hasattr(voice, "warm"):
+                    voice.warm()
+                ears.warm()
+        threading.Thread(target=keep_loaded, daemon=True).start()
+        print("Keeping the voice, ears and chat model loaded while Jim runs (--keep-loaded).")
 
     def warm_up_speech():
         """Someone's around: get the shared voice and ears loaded before Jim needs them (the
@@ -1772,7 +1790,8 @@ def main():
 
 if __name__ == "__main__":
     import signal
-    signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))  # run cleanup (stop the voice server)
+    for sig in (signal.SIGTERM, signal.SIGHUP):  # kill, or closing the terminal: clean up first
+        signal.signal(sig, lambda *a: sys.exit(0))
     try:
         main()
     except KeyboardInterrupt:

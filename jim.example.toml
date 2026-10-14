@@ -20,7 +20,7 @@ speech_url = "http://127.0.0.1:7895"      # Agentora's shared speech service
 ollama_url = "http://localhost:11434"
 ollama_model = "qwen3.5:9b"
 
-# keep_loaded = true      # keep the models on the GPU between runs (./keep_loaded.sh stop)
+# keep_loaded = true      # keep the models warm while Jim runs (all released when he stops)
 # house = "Two pieces of candy each!"
 
 # Security camera, so Jim can roast costumes (optional). The password is never stored here:
