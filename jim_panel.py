@@ -372,6 +372,65 @@ def save_camera_profile(b):
     return c
 
 
+def nvr_channels(c):
+    """The cameras behind a security camera's address when it's an NVR: [{channel, path, name, online, saved}].
+    Names come from the recorder's own API (Reolink); without it, each channel is tried over RTSP."""
+    import ssl, concurrent.futures
+    names = {}
+    ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE   # the NVR's own certificate
+
+    def call(cmd, body, token=None):
+        r = urllib.request.Request(f"https://{c['ip']}/api.cgi?cmd={cmd}" + (f"&token={token}" if token else ""),
+                                   json.dumps(body).encode(), {"Content-Type": "application/json"})
+        with urllib.request.urlopen(r, timeout=8, context=ctx) as resp:
+            return json.loads(resp.read())
+    try:
+        d = call("Login", [{"cmd": "Login", "param": {"User": {"Version": "0", "userName": c["user"], "password": c["password"]}}}])
+        token = d[0]["value"]["Token"]["name"]
+        try:
+            for ch in call("GetChannelstatus", [{"cmd": "GetChannelstatus"}], token)[0]["value"]["status"]:
+                names[int(ch["channel"]) + 1] = (ch.get("name") or "", bool(ch.get("online")))
+        finally:
+            call("Logout", [{"cmd": "Logout"}], token)
+    except Exception:
+        def probe(n):
+            u = dict(c, path=f"h264Preview_{n:02d}_main")
+            try:
+                r = subprocess.run(["ffprobe", "-v", "quiet", "-rtsp_transport", "tcp", "-timeout", "6000000", "-select_streams", "v",
+                                    "-show_entries", "stream=codec_type", "-of", "csv=p=0", camera_url(u)], capture_output=True, text=True, timeout=15)
+                return n, "video" in r.stdout
+            except subprocess.TimeoutExpired:
+                return n, False
+        with concurrent.futures.ThreadPoolExecutor(4) as ex:
+            names = {n: ("", ok) for n, ok in ex.map(probe, range(1, 17))}
+    saved = {x["path"]: x["id"] for x in cameras() if x["kind"] == "rtsp" and x["ip"] == c["ip"]}
+    out = []
+    for n, (name, online) in sorted(names.items()):
+        if online:
+            path = f"h264Preview_{n:02d}_main"
+            out.append({"channel": n, "path": path, "name": name or f"Channel {n}", "saved": saved.get(path)})
+    return out
+
+
+def add_nvr_channels(c, chosen):
+    """Save the chosen NVR channels as cameras (same address and login, each its own stream path)."""
+    cams, added = cameras(), []
+    for ch in chosen:
+        n = int(ch["channel"])
+        if not 1 <= n <= 64:
+            continue
+        path = f"h264Preview_{n:02d}_main"
+        if any(x["kind"] == "rtsp" and x["ip"] == c["ip"] and x["path"] == path for x in cams):
+            continue
+        name = str(ch.get("name") or f"Channel {n}").strip()[:40]
+        new = {"id": new_id(name, {x["id"] for x in cams}), "name": name, "kind": "rtsp", "ip": c["ip"], "user": c["user"],
+               "password": c["password"], "path": path}
+        cams.append(new); added.append(new["id"])
+    write_private(CAMERAS_FILE, cams)
+    threading.Thread(target=probe_camera_audio, args=([x for x in cams if x["id"] in added],), daemon=True).start()
+    return added
+
+
 def use_camera(cid):
     """Make this the camera the selected Jim looks through (he switches at once if he's running)."""
     if not any(c["id"] == cid for c in cameras()):
@@ -1001,6 +1060,21 @@ class Panel(BaseHTTPRequestHandler):
             if not c:
                 return self.send(404, {"error": "no such camera"})
             return self.stream(c["kind"], c.get("device"), camera_url(c) if c["kind"] == "rtsp" else None)
+        m = re.fullmatch(r"/api/cameras/([\w-]+)/channels", path)
+        if m:
+            c = next((c for c in cameras() if c["id"] == m.group(1) and c["kind"] == "rtsp"), None)
+            if not c:
+                return self.send(404, {"error": "no such security camera"})
+            return self.send(200, {"channels": nvr_channels(c)})
+        m = re.fullmatch(r"/api/cameras/([\w-]+)/channels/(\d+)/snapshot", path)
+        if m:
+            c = next((c for c in cameras() if c["id"] == m.group(1) and c["kind"] == "rtsp"), None)
+            if not c:
+                return self.send(404, {"error": "no such security camera"})
+            try:
+                return self.send(200, grab_frame("rtsp", None, camera_url(dict(c, path=f"h264Preview_{int(m.group(2)):02d}_main"))), "image/jpeg")
+            except (ValueError, OSError) as e:
+                return self.send(502, {"error": str(e)})
         m = re.fullmatch(r"/api/cameras/([\w-]+)/snapshot", path)
         if m:
             c = next((c for c in cameras() if c["id"] == m.group(1)), None)
@@ -1101,6 +1175,12 @@ class Panel(BaseHTTPRequestHandler):
                 return self.send(200, {"ok": True, "camera": camera_settings(), "restart": cur_jim().running()})
             if path == "/api/cameras":
                 return self.send(200, {"camera": public_camera(save_camera_profile(b)), "restart": False})
+            m = re.fullmatch(r"/api/cameras/([\w-]+)/channels", path)
+            if m:
+                c = next((c for c in cameras() if c["id"] == m.group(1) and c["kind"] == "rtsp"), None)
+                if not c:
+                    raise ValueError("no such security camera")
+                return self.send(200, {"added": add_nvr_channels(c, b.get("channels") or [])})
             m = re.fullmatch(r"/api/cameras/([\w-]+)/use", path)
             if m:
                 c = next((c for c in cameras() if c["id"] == m.group(1)), {})

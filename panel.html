@@ -216,6 +216,10 @@ table.dtab td{padding:6px;border-bottom:1px solid #22252b;font-variant-numeric:t
  <div class="card"><h2>Visits</h2><div id="visits" class="thumbs muted">—</div></div><div class="card" id="visitCard" style="display:none"><h2 id="visitTitle"></h2><div id="visit"></div></div>
 </section>
 </main>
+<div class="modal" id="nvrModal"><div class="card" style="max-width:1000px;max-height:90vh;overflow:auto">
+ <h2 id="nvrTitle">Cameras on this recorder</h2><div class="sub" id="nvrNote" style="margin-bottom:10px">Looking…</div>
+ <div class="cams" id="nvrList"></div>
+ <div class="row"><button class="b go" id="nvrSave">Save the ticked cameras</button><button class="b" id="nvrClose">Close</button></div></div></div>
 <div class="modal" id="addJim"><div class="card"><h2>Add a Jim</h2>
  <div class="field"><label>Name</label><input type="text" id="ajName" placeholder="Chris"></div>
  <div class="field"><label>Personality</label><select id="ajPersona"><option value="chris">Chris: fabulous, flamboyant, a loving fashion critic</option>
@@ -727,7 +731,8 @@ function paintCams(snaps) {
     <div><b>${esc(c.name)}</b>${c.id === CAMS.active ? '<span class="badge">In use</span>' : ""}
      <div class="sub">${c.kind === "usb" ? "USB webcam · " + esc(c.device) : "Security camera · " + esc(c.ip) + (c.password_saved ? "" : " · no password")}</div></div>
     <div class="row"><button class="b sm" data-act="snap" title="take a new preview picture">⟳ Refresh</button><button class="b sm" data-act="live">Live</button>
-     ${c.id !== CAMS.active ? '<button class="b sm go" data-act="use">Use</button>' : ""}<button class="b sm" data-act="edit">Edit</button><button class="b sm" data-act="del">Delete</button></div></div>`).join("")
+     ${c.id !== CAMS.active ? '<button class="b sm go" data-act="use">Use</button>' : ""}<button class="b sm" data-act="edit">Edit</button>
+     ${c.kind === "rtsp" ? '<button class="b sm" data-act="nvr" title="the other cameras on the same recorder (NVR)">More on this NVR…</button>' : ""}<button class="b sm" data-act="del">Delete</button></div></div>`).join("")
     || `<div class="muted">No cameras saved yet: add one.</div>`;
   if (snaps) CAMS.cameras.forEach(c => snap(c.id));
 }
@@ -770,7 +775,39 @@ $("cams").addEventListener("click", async e => {
   if (act === "edit") camForm(c);
   if (act === "use") { await useFromLive("cameras", id); CAMS.cameras.forEach(x => snap(x.id)) }
   if (act === "del" && confirm(`Delete ${c.name}?`)) { await api(`/api/cameras/${encodeURIComponent(id)}`, {method: "DELETE"}); loadCams(true) }
+  if (act === "nvr") nvrOpen(c);
 });
+// ---- the other cameras on an NVR (each channel is its own camera; same address and login)
+let nvrBase = null;
+async function nvrOpen(c) {
+  nvrBase = c; $("nvrModal").style.display = "flex"; $("nvrList").innerHTML = "";
+  $("nvrTitle").textContent = `Cameras on the recorder at ${c.ip}`; $("nvrNote").textContent = "Asking the recorder which cameras it has…";
+  try {
+    const chans = (await (await api(`/api/cameras/${encodeURIComponent(c.id)}/channels`)).json()).channels;
+    $("nvrNote").textContent = chans.length ? `${chans.length} cameras. Tick the ones to save; each becomes a camera any Jim can use.` : "No cameras found (not an NVR?).";
+    $("nvrList").innerHTML = chans.map(ch => `<div class="camcard" data-ch="${ch.channel}">
+      <div class="thumb"><img alt=""><span class="snapnote muted">waiting…</span></div>
+      <div class="field" style="margin:0"><input type="text" value="${esc(ch.name)}" ${ch.saved ? "disabled" : ""}></div>
+      <label class="sub">${ch.saved ? `✓ saved (channel ${ch.channel})` : `<input type="checkbox"> save (channel ${ch.channel})`}</label></div>`).join("");
+    for (const ch of chans) {                                     // one preview at a time: the recorder is busy enough
+      const card = document.querySelector(`#nvrList [data-ch="${ch.channel}"]`), img = card.querySelector("img"), note = card.querySelector(".snapnote");
+      note.textContent = "getting a picture…";
+      await new Promise(res => { img.onload = () => { note.textContent = ""; res() }; img.onerror = () => { note.textContent = "no picture"; res() };
+        img.src = u(`/api/cameras/${encodeURIComponent(c.id)}/channels/${ch.channel}/snapshot?t=${Date.now()}`) });
+      if ($("nvrModal").style.display === "none") break;
+    }
+  } catch (e) { $("nvrNote").textContent = "⚠ " + e.message }
+}
+$("nvrClose").onclick = () => { $("nvrModal").style.display = "none" };
+$("nvrSave").onclick = async () => {
+  const chosen = [...document.querySelectorAll("#nvrList [data-ch]")].filter(x => x.querySelector("input[type=checkbox]")?.checked)
+    .map(x => ({channel: +x.dataset.ch, name: x.querySelector("input[type=text]").value}));
+  if (!chosen.length) return toast("Tick at least one camera.");
+  try { const d = await (await post(`/api/cameras/${encodeURIComponent(nvrBase.id)}/channels`, {channels: chosen})).json();
+        $("nvrModal").style.display = "none"; await loadCams(true); toast(`${d.added.length} camera(s) saved. Use one from the Live tab or here.`) }
+  catch (e) { toast("Not saved: " + e.message) }
+};
+
 function camLive(c) {
   const img = $("camTest");
   $("camTestNote").textContent = `Connecting to ${c.name}…`;
