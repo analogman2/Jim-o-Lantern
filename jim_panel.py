@@ -8,7 +8,7 @@ jim.toml, comments kept); preview his voice; and play back recorded visits. The 
 Jim only runs while you start him here (or with ./start.sh); stopping the panel stops him.
 Usage: ./panel.sh [--port 8790]
 """
-import argparse, base64, collections, json, os, re, shutil, signal, subprocess, sys, threading, time, tomllib, urllib.parse
+import argparse, base64, collections, itertools, json, os, re, shutil, signal, subprocess, sys, threading, time, tomllib, urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,6 +21,7 @@ import pumpkin as P  # noqa: E402
 
 CONFIG = HERE / "jim.toml"
 RTSP_FILE = Path(P.CAMERA_FILE)
+LAYOUT_FILE = Path.home() / ".config" / "jim" / "dashboard.json"   # the Live tab's saved panel layout
 WATCH_PORT = 8780                                 # Jim's own viewer; the panel reads it
 WATCH = f"http://127.0.0.1:{WATCH_PORT}"
 PYTHON = HERE / ".venv" / "bin" / "python"
@@ -183,6 +184,27 @@ def grab_frame(source, usb):
     if "busy" in msg.lower():
         msg = "the webcam is busy (Jim is using it: see the Live tab)"
     raise ValueError(msg[-200:])
+
+
+def stream_cmd(source, usb):
+    """ffmpeg reading a camera continuously as JPEGs (5 a second), or None for the security camera if none is saved."""
+    if source == "usb":
+        src = ["-f", "v4l2", "-input_format", "mjpeg", "-video_size", "1280x720", "-i", usb]
+    else:
+        try:
+            src = ["-rtsp_transport", "tcp", "-timeout", "8000000", "-i", RTSP_FILE.read_text().strip()]
+        except OSError:
+            return None
+    return ["ffmpeg", "-loglevel", "quiet", *src, "-an", "-vf", "fps=5,scale=768:-2", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "5", "-"]
+
+
+def jims_camera():
+    """Which camera Jim is using right now (from his settings), if he's running."""
+    if not jim.running():
+        return None
+    cfg = load_config()
+    src = cfg.get("camera_source", "auto")
+    return ("usb", cfg.get("usb_camera", "/dev/video0")) if src == "usb" else ("rtsp", None) if src != "none" else None
 
 
 # ---------------------------------------------------------------- devices
@@ -448,6 +470,54 @@ class Panel(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):   # the page went away mid-reply
             pass
 
+    def stream(self, source, usb, limit_s=600):
+        """A live preview as multipart JPEG (an <img> shows it as video) for up to limit_s. The USB webcam can only be
+        opened by one program: while Jim is using it, this shows his frames instead."""
+        mine = jims_camera()
+        borrow = mine is not None and mine[0] == "usb" and source == "usb" and mine[1] == usb
+
+        def frames():
+            if borrow:
+                while True:
+                    try:
+                        with urllib.request.urlopen(WATCH + "/live.jpg", timeout=3) as r:
+                            yield r.read()
+                    except Exception:
+                        return
+                    time.sleep(0.2)
+            cmd = stream_cmd(source, usb)
+            if not cmd:
+                return
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            try:
+                buf = b""
+                while chunk := proc.stdout.read(65536):
+                    buf += chunk
+                    while (start := buf.find(b"\xff\xd8")) >= 0 and (end := buf.find(b"\xff\xd9", start + 2)) >= 0:
+                        yield buf[start:end + 2]
+                        buf = buf[end + 2:]
+            finally:
+                proc.kill(); proc.wait()
+
+        gen, t0 = frames(), time.time()
+        first = next(gen, None)
+        if first is None:
+            return self.send(502, {"error": "the webcam is busy or unplugged" if source == "usb" else "the camera didn't answer"})
+        self.send_response(200)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            for jpg in itertools.chain([first], gen):
+                self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + str(len(jpg)).encode() + b"\r\n\r\n" + jpg + b"\r\n")
+                self.wfile.flush()
+                if time.time() - t0 > limit_s:
+                    break
+        except (BrokenPipeError, ConnectionResetError):          # the page stopped watching
+            pass
+        finally:
+            gen.close()
+
     def body(self):
         n = int(self.headers.get("Content-Length") or 0)
         return json.loads(self.rfile.read(n) or b"{}") if n else {}
@@ -470,6 +540,11 @@ class Panel(BaseHTTPRequestHandler):
             return self.proxy(path[4:])
         if path == "/api/status":
             return self.send(200, jim.status())
+        if path == "/api/layout":
+            try:
+                return self.send(200, {"layout": json.loads(LAYOUT_FILE.read_text())})
+            except (OSError, ValueError):
+                return self.send(200, {"layout": None})
         if path == "/api/network":
             return self.send(200, {"every_s": NET_EVERY_S, "checks": NET})
         if path == "/api/settings":
@@ -477,6 +552,13 @@ class Panel(BaseHTTPRequestHandler):
             tabs = {tab: [{"title": t, "fields": [dict(opts[k], name=k, value=cfg.get(k, opts[k]["default"]), long=k in LONG, pick=PICK.get(k))
                                                   for k in keys if k in opts]} for t, keys in groups] for tab, groups in GROUPS.items()}
             return self.send(200, {"tabs": tabs, "camera": camera_settings()})
+        if path == "/api/camera/stream":
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            source = "usb" if q.get("source", [""])[0] == "usb" else "rtsp"
+            usb = q.get("dev", ["/dev/video0"])[0]
+            if not re.fullmatch(r"/dev/video\d+", usb):
+                return self.send(400, {"error": "not a webcam device"})
+            return self.stream(source, usb)
         if path == "/api/devices":
             return self.send(200, devices())
         if path == "/api/recordings":
@@ -505,6 +587,13 @@ class Panel(BaseHTTPRequestHandler):
                 if path.endswith(("start", "restart")):
                     jim.start()
                 return self.send(200, jim.status())
+            if path == "/api/layout":
+                if not isinstance(b, list) or not all(isinstance(x, dict) and re.fullmatch(r"\w+", str(x.get("id", ""))) for x in b):
+                    raise ValueError("not a layout")
+                keep = ("id", "x", "y", "w", "h", "hidden")
+                LAYOUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+                LAYOUT_FILE.write_text(json.dumps([{k: x[k] for k in keep if k in x} for x in b]))
+                return self.send(200, {"ok": True})
             if path == "/api/snooze":
                 return self.proxy("/snooze", "POST", json.dumps({"seconds": b.get("seconds", 10)}).encode())
             if path == "/api/settings":

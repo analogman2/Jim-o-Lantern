@@ -225,12 +225,24 @@ WLED_MIC_PORT = 21330   # patched WLED firmware streams raw mic samples from her
 def alsa_source(device):
     """Yield int16 sample blocks from an ALSA capture device. Returns (rate, generator)."""
     def gen():
-        proc = subprocess.Popen(["arecord", "-q", "-D", device, "-f", "S16_LE",
-                                 "-r", str(MIC_RATE), "-c", "1", "-t", "raw"],
-                                stdout=subprocess.PIPE)
-        while len(data := proc.stdout.read(960)) == 960:
-            yield np.frombuffer(data, np.int16)
-        print("[mic] arecord stopped", file=sys.stderr)
+        # a USB mic can drop off (a hub resets, a cable gets bumped): keep trying until it's back
+        lost = False
+        while True:
+            proc = subprocess.Popen(["arecord", "-q", "-D", device, "-f", "S16_LE",
+                                     "-r", str(MIC_RATE), "-c", "1", "-t", "raw"],
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            got = 0
+            while len(data := proc.stdout.read(960)) == 960:
+                if lost and not got:
+                    print("[mic] the microphone is back", file=sys.stderr, flush=True)
+                    lost = False
+                got += 1
+                yield np.frombuffer(data, np.int16)
+            proc.wait()
+            if not lost:
+                print(f"[mic] lost the microphone ({device}); retrying every 3 s", file=sys.stderr, flush=True)
+                lost = True
+            time.sleep(3)
     return MIC_RATE, gen()
 
 
@@ -298,6 +310,7 @@ class Mic(threading.Thread):
         self.in_speech = False  # someone is talking right now
         self.debug_levels = False
         self.level = self.thresh = 0.0  # latest loudness and the current trigger level (for the panel)
+        self.level_t = 0.0               # when the last sound frame arrived (a lost mic stops updating it)
 
     def mute(self):
         self.muted.set()
@@ -337,6 +350,7 @@ class Mic(threading.Thread):
             rms = float(np.sqrt(np.mean(pcm ** 2)))
             thresh = max(floor * self.vad_ratio, self.min_rms)
             self.level, self.thresh = max(rms, self.level * 0.85), thresh   # a peak meter that falls back
+            self.level_t = time.time()
             loud = rms > thresh
             if loud:
                 now = time.time()
@@ -1994,7 +2008,8 @@ def main():
 
     if watch:
         watch.on_snooze = snooze
-        watch.extra = lambda: {"mic": {"level": round(mic.level), "thresh": round(mic.thresh)},
+        watch.extra = lambda: {"mic": {"level": round(mic.level), "thresh": round(mic.thresh),
+                                       "age_s": round(time.time() - mic.level_t, 1) if mic.level_t else None},
                                "snooze_left": max(0, round(snooze_until[0] - time.time())), "recording": bool(rec),
                                "metrics": {k: list(v) for k, v in metrics.items()}, "camera": camera.stats() if camera else None}
     if sys.stdin.isatty():

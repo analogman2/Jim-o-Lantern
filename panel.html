@@ -44,9 +44,10 @@ pre.console{margin:0;max-height:300px;overflow:auto;font:12px/1.4 ui-monospace,m
 .dash{--g-bg:#111217;--g-panel:#181b1f;--g-line:#2c3235;--g-text:#ccccdc;--g-mute:#8e8e9a;--g-green:#73bf69;--g-yellow:#fade2a;--g-red:#f2495c;--g-blue:#5794f2;--g-orange:#ff9830;--g-purple:#b877d9;
  background:var(--g-bg);color:var(--g-text);border-radius:12px;padding:10px;margin-bottom:16px;font-family:Inter,system-ui,sans-serif}
 .dhead{display:flex;justify-content:space-between;align-items:center;padding:2px 4px 10px;font-weight:600}.dash .sub{color:var(--g-mute);font-weight:400;font-size:12px}
-.dgrid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:8px;grid-auto-flow:row dense}
+.dgrid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));grid-auto-rows:20px;gap:8px}
+.dbtn.save:not(:disabled){background:#3d71d9;border-color:#3d71d9;color:#fff}.dbtn:disabled{opacity:.6;cursor:default}
+.dp.dragging{opacity:.85;outline:1px dashed var(--g-blue);z-index:4}
 .dp{background:var(--g-panel);border:1px solid var(--g-line);border-radius:4px;padding:6px 10px 8px;position:relative;overflow:hidden;min-width:0;display:flex;flex-direction:column}
-.dp.dragging{opacity:.35}.dp.over-before{box-shadow:-3px 0 0 var(--g-blue)}.dp.over-after{box-shadow:3px 0 0 var(--g-blue)}
 .dt{font-size:13px;font-weight:500;color:var(--g-text);margin:0 -10px 4px;padding:0 10px 2px;cursor:grab;display:flex;align-items:center;gap:6px;user-select:none;position:relative;z-index:2}
 .dt:hover{background:rgba(255,255,255,.03)}.dt .x{margin-left:auto;border:0;background:none;color:var(--g-mute);font-size:16px;line-height:1;cursor:pointer;padding:2px 4px;border-radius:3px;visibility:hidden}
 .dp:hover .dt .x{visibility:visible}.dt .x:hover{color:var(--g-text);background:#2c3235}
@@ -63,7 +64,7 @@ pre.console{margin:0;max-height:300px;overflow:auto;font:12px/1.4 ui-monospace,m
 .vbar b{position:absolute;left:-2px;right:-2px;height:2px;background:#fff;box-shadow:0 0 0 1px #000}
 .vread{display:flex;flex-direction:column;justify-content:flex-end;min-width:0}.vread .dv{font-size:28px}.dash ul.log{max-height:none}.dash ul.log li{border-top-color:#22252b;color:var(--g-text)}
 .dash pre.console{max-height:none;background:#0b0c0e;color:#b7c0c8;margin:0}.dash .verdict{margin:0}.dash .yes{color:var(--g-green)}.dash .no{color:var(--g-mute)}.dash .err{color:var(--g-red)}
-@media (max-width:700px){.dp{grid-column:1/-1 !important}.rs{display:none}}
+@media (max-width:700px){.dgrid{display:flex;flex-direction:column}.dp{min-height:120px}.dp[data-h="360"]{height:340px}.dp[data-h="270"],.dp[data-h="320"]{height:280px}.rs{display:none}.dt{cursor:default}}
 .dv{font-size:34px;font-weight:600;line-height:1.15;font-variant-numeric:tabular-nums;position:relative;z-index:1;color:var(--g-mute)}
 .ds{font-size:11px;color:var(--g-mute);position:relative;z-index:1}
 svg.dsp{position:absolute;left:0;right:0;bottom:0;width:100%;height:46%;opacity:.9}
@@ -85,7 +86,7 @@ table.dtab td{padding:6px;border-bottom:1px solid #22252b;font-variant-numeric:t
  <div id="others" class="card" style="display:none"></div>
  <div class="dash" id="dash">
   <div class="dhead"><span>📊 Jim · metrics <span class="sub" id="dashClock"></span></span>
-   <span class="dtools"><select id="dAdd"><option value="">＋ Add panel</option></select><button class="dbtn" id="dReset" title="put every panel back">Reset layout</button></span></div>
+   <span class="dtools"><select id="dAdd"><option value="">＋ Add panel</option></select><button class="dbtn" id="dReset" title="put every panel back">Reset layout</button><button class="dbtn save" id="dSave" disabled>Layout saved</button></span></div>
   <div class="dgrid" id="dgrid">
    <div class="dp" data-id="first_word" data-stat="first_word" data-w="2" data-h="130"><div class="dt">First word</div><div class="dv">—</div><div class="ds">kid stops → Jim speaks · median</div><svg class="dsp"></svg></div>
    <div class="dp" data-id="think" data-stat="think" data-w="2" data-h="130"><div class="dt">Thinking</div><div class="dv">—</div><div class="ds">first sentence · median</div><svg class="dsp"></svg></div>
@@ -118,8 +119,8 @@ table.dtab td{padding:6px;border-bottom:1px solid #22252b;font-variant-numeric:t
    <div class="field"><label>Stream path</label><input type="text" id="camPath"><div class="help">Reolink: h264Preview_01_main</div></div>
    <div class="field"><label>Password</label><input type="password" id="camPass" autocomplete="new-password"><div class="help" id="camPassHelp"></div></div>
    <div class="row"><button class="b go" id="camSave">Save camera</button></div></div>
-  <div class="card"><h2>Test</h2><img class="view" id="camTest" alt=""><div class="muted" id="camTestNote">Grab one picture with the settings as saved.</div>
-   <div class="row" style="margin-top:8px"><button class="b" id="camTestRtsp">Security camera</button><button class="b" id="camTestUsb">USB webcam</button></div></div>
+  <div class="card"><h2>Live preview</h2><img class="view" id="camTest" alt=""><div class="muted" id="camTestNote">Watch a camera live (5 frames a second) with the settings as saved.</div>
+   <div class="row" style="margin-top:8px"><button class="b" id="camTestRtsp">Security camera</button><button class="b" id="camTestUsb">USB webcam</button><button class="b" id="camStop">Stop</button></div></div>
  </div>
  <div id="fields-camera"></div>
 </section>
@@ -171,6 +172,8 @@ function show(name) {
   for (const [k] of TABS) { $("tab-" + k).classList.toggle("on", k === name); document.querySelector(`nav [data-t=${k}]`).classList.toggle("on", k === name) }
   try { localStorage.setItem("jimTab", name) } catch (e) {}
   if (name === "recordings") loadVisits();
+  updateLive();
+  if (name !== "camera" && $("camTest").getAttribute("src")) camStop();
 }
 $("nav").innerHTML = TABS.map(([k, t]) => `<button data-t="${k}">${t}</button>`).join("");
 $("nav").onclick = e => e.target.dataset.t && show(e.target.dataset.t);
@@ -206,6 +209,7 @@ function renderForms() {
       fieldEls[f.name] = f;
       const el = $("f_" + f.name);
       el.addEventListener("input", () => { el.closest(".field").classList.toggle("changed", JSON.stringify(readField(f)) !== JSON.stringify(f.value)) });
+      if (f.name === "camera_source" || f.name === "usb_camera") el.addEventListener("change", () => updateLive());
     }
   }
 }
@@ -246,7 +250,7 @@ function paintStatus() {
     <div class="row" style="margin-top:8px">${others.map(p => `<button class="b" data-kill="${p}">Stop pid ${p}</button>`).join("")}</div>` : "";
   const con = $("console"), atEnd = con.scrollTop + con.clientHeight >= con.scrollHeight - 20;
   con.textContent = (status.log || []).join("\n"); if (atEnd) con.scrollTop = con.scrollHeight;
-  $("liveNote").textContent = on ? "" : "Jim isn't running.";
+  paintLiveNote && paintLiveNote();
 }
 document.addEventListener("click", e => { if (e.target.dataset?.kill) control("stop", +e.target.dataset.kill) });
 
@@ -255,6 +259,10 @@ let judgedAt = 0;
 const dbfs = v => v > 0 ? 20 * Math.log10(v / 32768) : -90;
 const pctDb = db => Math.max(0, Math.min(100, (db + 80) / 80 * 100));      // -80..0 dBFS -> 0..100 %
 function vmeter(mic) {
+  if (mic.age_s == null || mic.age_s > 2) {                 // no sound frames: the mic is unplugged or failed
+    $("lvl").style.height = "100%"; $("lvlDb").textContent = "no sound"; $("lvlDb").style.color = "#f2495c";
+    $("lvlText").textContent = "The microphone isn't sending anything (unplugged?). Jim keeps retrying."; return;
+  }
   const db = dbfs(mic.level), th = dbfs(mic.thresh), on = mic.level > mic.thresh;
   $("lvl").style.height = (100 - pctDb(db)) + "%"; $("thr").style.bottom = `calc(${pctDb(th)}% - 1px)`;
   $("lvlDb").textContent = db <= -89 ? "—" : Math.round(db) + " dB"; $("lvlDb").style.color = on ? "#73bf69" : "#8e8e9a";
@@ -262,7 +270,7 @@ function vmeter(mic) {
 }
 async function pollMic() {
   if (!status.running || !$("tab-live").classList.contains("on")) return;
-  try { const m = await (await api("/jim/mic.json")).json(); if (m.thresh) vmeter(m) } catch (e) {}
+  try { const m = await (await api("/jim/mic.json")).json(); vmeter(m) } catch (e) {}
 }
 setInterval(pollMic, 200);
 function meter(i, b, t, mic) {
@@ -286,7 +294,31 @@ async function pollLive() {
   } catch (e) {}
 }
 setInterval(pollLive, 1000);
-setInterval(() => { if (status.running && $("tab-live").classList.contains("on")) $("live").src = "/jim/live.jpg?" + Date.now() }, 600);
+// the Live camera shows the input chosen on the Camera tab (saved or not), as a live stream while the Live tab is open
+let liveKey = null, liveSince = 0;
+function liveInput() {
+  const src = fieldEls.camera_source ? readField(fieldEls.camera_source) : "auto";
+  const dev = fieldEls.usb_camera ? readField(fieldEls.usb_camera) : "/dev/video0";
+  return src === "none" ? null : {source: src === "usb" ? "usb" : "rtsp", dev};
+}
+function updateLive() {
+  const on = $("tab-live").classList.contains("on"), inp = on ? liveInput() : null;
+  const key = inp ? inp.source + inp.dev : null;
+  if (key === liveKey && !(key && Date.now() - liveSince > 540e3)) return;     // the server ends a stream after 10 min
+  liveKey = key; liveSince = Date.now();
+  const img = $("live");
+  if (!inp) { img.removeAttribute("src"); $("liveNote").textContent = on ? "No camera chosen (Camera tab)." : ""; return }
+  img.onerror = () => { img.removeAttribute("src"); $("liveNote").textContent = inp.source === "usb" ? `⚠ Couldn't open ${inp.dev}.` : "⚠ The security camera didn't answer."; setTimeout(() => { liveKey = null }, 5000) };
+  img.src = `/api/camera/stream?source=${inp.source}&dev=${encodeURIComponent(inp.dev)}&t=${Date.now()}`;
+  paintLiveNote();
+}
+function paintLiveNote() {
+  const inp = liveInput(); if (!inp) return;
+  const name = inp.source === "usb" ? "USB webcam " + inp.dev : "Security camera";
+  const jims = status.running && lastJim?.camera ? lastJim.camera.kind : null;
+  $("liveNote").textContent = name + (jims && jims !== inp.source ? ` · Jim still sees the ${jims === "usb" ? "USB webcam" : "security camera"} until you save and restart him` : "");
+}
+setInterval(updateLive, 1000);
 
 // ---- metrics dashboard (Grafana-style; plain SVG)
 const G = {green: "#73bf69", yellow: "#fade2a", red: "#f2495c", blue: "#5794f2", orange: "#ff9830", purple: "#b877d9", mute: "#8e8e9a"};
@@ -366,63 +398,123 @@ async function pollNet() { try { net = (await (await api("/api/network")).json()
 setInterval(pollNet, 5000); pollNet();
 addEventListener("resize", () => paintDash());
 
-// ---- dashboard layout: drag panels by their title, resize from the corner, close with ×. Remembered in this browser.
-const grid = $("dgrid"), PANELS = [...grid.children].map(p => ({id: p.dataset.id, w: +p.dataset.w, h: +p.dataset.h}));
-const panel = id => grid.querySelector(`[data-id="${id}"]`);
-let layout;
-function loadLayout() {
-  let saved = null; try { saved = JSON.parse(localStorage.getItem("jimDash") || "null") } catch (e) {}
-  const known = new Set(PANELS.map(p => p.id));
-  layout = (saved || []).filter(p => known.has(p.id));
-  for (const p of PANELS) if (!layout.some(l => l.id === p.id)) layout.push({...p});   // panels added since
+// ---- dashboard layout (Grafana-style): a 12-column grid; each panel has x, y, w, h (h in 20 px rows). Drag a panel by its
+// title anywhere (tiles stack; whatever is in the way moves down, gaps close upward), resize from the corner, close with x.
+// "Save layout" keeps it on the panel's server for every browser; unsaved changes are kept as a draft in this browser.
+const ROW = 20, GAP = 8, COLS = 12;
+const grid = $("dgrid"), panel = id => grid.querySelector(`[data-id="${id}"]`);
+const PANELS = [...grid.children].map(p => ({id: p.dataset.id, w: +p.dataset.w, h: Math.max(3, Math.round((+p.dataset.h + GAP) / (ROW + GAP)))}));
+let layout = [], saved = null;
+const hit = (a, b) => a !== b && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+const shown = () => layout.filter(l => !l.hidden);
+function place(items) {                  // items without a position go into the first free spot, top to bottom
+  const done = [];
+  for (const it of items) {
+    if (it.x == null || it.y == null) {
+      for (let y = 0, found = false; !found; y++) for (let x = 0; x + it.w <= COLS && !found; x++) {
+        it.x = x; it.y = y; found = !done.some(d => hit(d, it));
+      }
+    }
+    done.push(it);
+  }
+  return items;
 }
-function saveLayout() { try { localStorage.setItem("jimDash", JSON.stringify(layout)) } catch (e) {} }
-function applyLayout() {
+function settle(fixed) {                 // push overlaps down (the panel being moved keeps its spot), then float everything up
+  const items = shown().sort((a, b) => (a === fixed ? -1 : b === fixed ? 1 : a.y - b.y || a.x - b.x));
+  const done = [];
+  for (const it of items) {
+    it.x = Math.max(0, Math.min(COLS - it.w, it.x)); it.y = Math.max(0, it.y);
+    if (it !== fixed) while (done.some(d => hit(d, it))) it.y = Math.max(...done.filter(d => hit(d, it)).map(d => d.y + d.h));
+    done.push(it);
+  }
+  for (const it of [...items].sort((a, b) => a.y - b.y || a.x - b.x)) {
+    if (it === fixed) continue;
+    while (it.y > 0) { it.y--; if (items.some(o => hit(o, it))) { it.y++; break } }
+  }
+}
+const snapshot = () => JSON.stringify(layout.map(({id, x, y, w, h, hidden}) => ({id, x, y, w, h, hidden: !!hidden})));
+function dirty() { return saved !== snapshot() }
+function draft() { try { localStorage.setItem("jimDashDraft", snapshot()) } catch (e) {} ; paintSave() }
+function paintSave() { const d = dirty(); $("dSave").disabled = !d; $("dSave").textContent = d ? "Save layout •" : "Layout saved" }
+function fromList(list) {
+  const known = new Map(PANELS.map(p => [p.id, p]));
+  const out = (list || []).filter(l => known.has(l.id)).map(l => ({...known.get(l.id), ...l}));
+  for (const p of PANELS) if (!out.some(l => l.id === p.id)) out.push({...p, x: null, y: null});   // panels added since
+  return out;
+}
+function applyLayout(fixed = null) {
+  place(shown()); settle(fixed);
   for (const l of layout) {
-    const el = panel(l.id); grid.appendChild(el);                     // order = layout order
-    el.style.gridColumn = `span ${l.w}`; el.style.height = l.h + "px"; el.style.display = l.hidden ? "none" : "";
+    const el = panel(l.id);
+    el.style.display = l.hidden ? "none" : "";
+    el.style.gridColumn = `${l.x + 1} / span ${l.w}`; el.style.gridRow = `${l.y + 1} / span ${l.h}`; el.style.height = "";
+    el.style.order = l.y * COLS + l.x;                                   // phone width: one column in reading order
   }
   const hidden = layout.filter(l => l.hidden);
   $("dAdd").innerHTML = `<option value="">＋ Add panel${hidden.length ? ` (${hidden.length})` : ""}</option>` +
     hidden.map(l => `<option value="${l.id}">${esc(panel(l.id).querySelector(".dt").firstChild.textContent.trim())}</option>`).join("");
   $("dAdd").disabled = !hidden.length;
-  paintDash();
+  paintDash(); paintSave();
+}
+function cellAt(clientX, clientY) {
+  const r = grid.getBoundingClientRect(), col = (r.width + GAP) / COLS;
+  return {x: Math.floor((clientX - r.left) / col), y: Math.floor((clientY - r.top) / (ROW + GAP)), col};
 }
 for (const el of grid.children) {
   const head = el.querySelector(".dt");
   head.insertAdjacentHTML("beforeend", `<button class="x" title="close this panel">×</button>`);
   el.insertAdjacentHTML("beforeend", `<div class="rs" title="drag to resize"></div>`);
-  head.querySelector(".x").onclick = () => { layout.find(l => l.id === el.dataset.id).hidden = true; saveLayout(); applyLayout() };
-  head.addEventListener("pointerdown", e => { if (!e.target.closest(".x")) el.draggable = true });
-  el.addEventListener("dragstart", e => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", el.dataset.id); el.classList.add("dragging") });
-  el.addEventListener("dragend", () => { el.draggable = false; el.classList.remove("dragging"); grid.querySelectorAll(".over-before,.over-after").forEach(x => x.classList.remove("over-before", "over-after")) });
-  el.addEventListener("dragover", e => {
-    e.preventDefault(); const r = el.getBoundingClientRect(), after = e.clientX > r.left + r.width / 2;
-    el.classList.toggle("over-after", after); el.classList.toggle("over-before", !after);
-  });
-  el.addEventListener("dragleave", () => el.classList.remove("over-before", "over-after"));
-  el.addEventListener("drop", e => {
-    e.preventDefault(); const from = e.dataTransfer.getData("text/plain"), after = el.classList.contains("over-after");
-    if (!from || from === el.dataset.id) return;
-    const moving = layout.splice(layout.findIndex(l => l.id === from), 1)[0];
-    layout.splice(layout.findIndex(l => l.id === el.dataset.id) + (after ? 1 : 0), 0, moving);
-    saveLayout(); applyLayout();
-  });
-  el.querySelector(".rs").addEventListener("pointerdown", e => {
-    e.preventDefault(); e.stopPropagation();
-    const l = layout.find(x => x.id === el.dataset.id), col = (grid.clientWidth + 8) / 12, sx = e.clientX, sy = e.clientY, w0 = l.w, h0 = l.h;
-    el.classList.add("resizing"); el.setPointerCapture(e.pointerId);
+  head.querySelector(".x").onclick = () => { layout.find(l => l.id === el.dataset.id).hidden = true; applyLayout(); draft() };
+  head.addEventListener("pointerdown", e => {                           // move
+    if (e.target.closest(".x") || e.button !== 0 || innerWidth <= 700) return;
+    e.preventDefault();
+    const l = layout.find(x => x.id === el.dataset.id), start = cellAt(e.clientX, e.clientY), x0 = l.x, y0 = l.y;
+    const orig = new Map(layout.map(o => [o, {x: o.x, y: o.y}]));      // others start from here on every move
+    el.classList.add("dragging"); head.setPointerCapture(e.pointerId);
+    let last = "";
     const move = ev => {
-      l.w = Math.max(2, Math.min(12, Math.round(w0 + (ev.clientX - sx) / col))); l.h = Math.max(100, Math.min(900, Math.round((h0 + ev.clientY - sy) / 10) * 10));
-      el.style.gridColumn = `span ${l.w}`; el.style.height = l.h + "px"; paintDash();
+      const c = cellAt(ev.clientX, ev.clientY), nx = x0 + c.x - start.x, ny = Math.max(0, y0 + c.y - start.y);
+      if (`${nx},${ny}` === last) return;
+      last = `${nx},${ny}`;
+      for (const [o, p] of orig) Object.assign(o, p);
+      l.x = nx; l.y = ny; applyLayout(l);
     };
-    const up = () => { el.classList.remove("resizing"); el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); saveLayout() };
-    el.addEventListener("pointermove", move); el.addEventListener("pointerup", up);
+    const up = () => { el.classList.remove("dragging"); head.removeEventListener("pointermove", move); head.removeEventListener("pointerup", up);
+      settle(null); applyLayout(); draft() };
+    head.addEventListener("pointermove", move); head.addEventListener("pointerup", up);
+  });
+  el.querySelector(".rs").addEventListener("pointerdown", e => {      // resize
+    e.preventDefault(); e.stopPropagation();
+    const l = layout.find(x => x.id === el.dataset.id), start = cellAt(e.clientX, e.clientY), w0 = l.w, h0 = l.h;
+    const orig = new Map(layout.map(o => [o, {x: o.x, y: o.y}]));
+    el.classList.add("resizing"); e.target.setPointerCapture(e.pointerId);
+    const move = ev => {
+      const c = cellAt(ev.clientX, ev.clientY);
+      const w = Math.max(2, Math.min(COLS - l.x, w0 + c.x - start.x)), h = Math.max(3, Math.min(40, h0 + c.y - start.y));
+      if (w === l.w && h === l.h) return;
+      for (const [o, p] of orig) Object.assign(o, p);
+      l.w = w; l.h = h; applyLayout(l);
+    };
+    const up = () => { el.classList.remove("resizing"); e.target.removeEventListener("pointermove", move); e.target.removeEventListener("pointerup", up); draft() };
+    e.target.addEventListener("pointermove", move); e.target.addEventListener("pointerup", up);
   });
 }
-$("dAdd").onchange = e => { const l = layout.find(x => x.id === e.target.value); if (l) { l.hidden = false; saveLayout(); applyLayout() } };
-$("dReset").onclick = () => { layout = PANELS.map(p => ({...p})); saveLayout(); applyLayout() };
-loadLayout(); applyLayout();
+$("dAdd").onchange = e => { const l = layout.find(x => x.id === e.target.value); if (l) { l.hidden = false; l.x = l.y = null; applyLayout(); draft() } };
+$("dReset").onclick = () => { layout = fromList([]); applyLayout(); draft() };
+$("dSave").onclick = async () => {
+  try { await post("/api/layout", JSON.parse(snapshot())); saved = snapshot(); try { localStorage.removeItem("jimDashDraft") } catch (e) {} paintSave(); toast("Layout saved.") }
+  catch (e) { toast("Not saved: " + e.message) }
+};
+async function loadLayout() {
+  let server = null, local = null;
+  try { server = (await (await api("/api/layout")).json()).layout } catch (e) {}
+  try { local = JSON.parse(localStorage.getItem("jimDashDraft") || "null") } catch (e) {}
+  layout = fromList(server); place(shown()); settle(null); saved = server ? snapshot() : null;
+  if (local) layout = fromList(local);
+  applyLayout();
+}
+try { localStorage.removeItem("jimDash") } catch (e) {}                 // the old flow layout
+loadLayout();
 
 // ---- camera
 $("camSave").onclick = async () => {
@@ -432,14 +524,16 @@ $("camSave").onclick = async () => {
     toast(d.restart ? "Camera saved. Restart Jim to use it." : "Camera saved.", d.restart);
   } catch (e) { toast("Not saved: " + e.message) }
 };
-async function camTest(source) {
-  $("camTestNote").textContent = "Asking the camera for a picture…";
-  try {
-    const r = await post("/api/camera/test", {source, usb_camera: fieldEls.usb_camera ? readField(fieldEls.usb_camera) : undefined});
-    $("camTest").src = URL.createObjectURL(await r.blob()); $("camTestNote").textContent = source === "usb" ? "USB webcam: working." : "Security camera: working.";
-  } catch (e) { $("camTest").removeAttribute("src"); $("camTestNote").textContent = "⚠ " + e.message }
+function camTest(source) {
+  const img = $("camTest"), dev = fieldEls.usb_camera ? readField(fieldEls.usb_camera) : "/dev/video0";
+  $("camTestNote").textContent = "Connecting…";
+  img.onload = () => { $("camTestNote").textContent = (source === "usb" ? "USB webcam " + dev : "Security camera") + ": live." };
+  img.onerror = () => { img.removeAttribute("src"); $("camTestNote").textContent = source === "usb"
+    ? "⚠ Couldn't open the webcam (unplugged, or another program has it)." : "⚠ The security camera didn't answer (check its IP, user and password)." };
+  img.src = `/api/camera/stream?source=${source}&dev=${encodeURIComponent(dev)}&t=${Date.now()}`;
 }
-$("camTestRtsp").onclick = () => camTest("rtsp"); $("camTestUsb").onclick = () => camTest("usb");
+function camStop() { $("camTest").onerror = null; $("camTest").removeAttribute("src"); $("camTestNote").textContent = "Stopped." }
+$("camTestRtsp").onclick = () => camTest("rtsp"); $("camTestUsb").onclick = () => camTest("usb"); $("camStop").onclick = camStop;
 
 // ---- mic test
 $("micTest").onclick = async () => {
