@@ -69,6 +69,7 @@ GROUPS = {
     "responses": [("Personality", ["house", "temperature", "max_words"]),
                   ("Brain", ["brain", "ollama_model", "ollama_url", "keep_loaded"]),
                   ("Timing", ["reset_after", "eyes_timeout", "snooze", "start_delay"]),
+                  ("Two Jims (with another Jim beside him)", ["banter", "banter_max"]),
                   ("Face (LEDs)", ["wled", "brightness", "flip_x", "flip_y"])],
     "recordings": [("Recording", ["record", "record_keep_days", "record_dir"])],
 }
@@ -78,7 +79,7 @@ MANAGED = {k for groups in GROUPS.values() for _, keys in groups for k in keys}
 SLIDERS = {"pitch": (0.7, 0.06, 1.0), "intonation": (0.85, 0.15, 1.0), "echo": (0.0, 0.05, 0.0), "grit": (0.0, 0.06, 0.0),
            "lip_offset": (0.0, 0.025, None), "temperature": (0.2, 0.15, None), "max_words": (5, 5, None),
            "reset_after": (10, 10, None), "eyes_timeout": (10, 10, None), "snooze": (5, 5, None), "start_delay": (0, 15, None),
-           "brightness": (0.1, 0.1, None)}
+           "brightness": (0.1, 0.1, None), "banter": (0.0, 0.1, None), "banter_max": (1, 1, None)}
 CAMERAS_FILE = CONFIG_DIR / "cameras.json"      # saved cameras, with passwords: only you can read it
 MICS_FILE = CONFIG_DIR / "mics.json"
 SPEAKERS_FILE = CONFIG_DIR / "speakers.json"
@@ -714,6 +715,7 @@ class Jim:
             self.log.clear()
             self.log.append(f"--- starting {self.inst['name']} at {time.strftime('%H:%M:%S')}")
             self.proc = subprocess.Popen([str(PYTHON), "-u", "pumpkin.py", "--config", str(config_path(self.inst)), "--name", self.inst["name"],
+                                          "--jim-id", self.inst["id"],
                                           "--watch-port", str(self.inst["watch_port"])], cwd=HERE,
                                          stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                          env=dict(os.environ, PYTHONUNBUFFERED="1"), text=True, bufsize=1,
@@ -1063,6 +1065,13 @@ class Panel(BaseHTTPRequestHandler):
                 write_settings({"min_rms": v, "level_mode": "fixed"})
                 live = jim_post("/min_rms", {"min_rms": v, "fixed": True})
                 return self.send(200, {"ok": True, "min_rms": v, "live": live})
+            if path in ("/api/hear", "/api/wake"):
+                text = str(b.get("text") or "").strip()[:300]
+                if path == "/api/hear" and not text:
+                    raise ValueError("type something for Jim to hear")
+                if not jim_post(path[4:], {"text": text}):
+                    raise ValueError(f"{inst()['name']} isn't running")
+                return self.send(200, {"ok": True})
             if path == "/api/snooze":
                 return self.proxy("/snooze", "POST", json.dumps({"seconds": b.get("seconds", 10)}).encode())
             if path == "/api/settings":

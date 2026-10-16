@@ -127,6 +127,14 @@ recordings folder and metrics; the header shows each one's state, and every tab 
 mics and speakers are shared, but a USB mic, webcam or speaker can only serve one Jim at a time (the panel warns).
 They share one loaded copy of the chat model.
 
+**Jims that talk to each other:** Jims next to each other hear each other's lines directly (not through the air) and
+banter: after one speaks, the other may tease him or pile on the costume roast (**Replies → Two Jims**: how often,
+and how many lines in a row before the kids get a turn). Only one pumpkin talks at a time, and nobody listens while a
+pumpkin talks, so they never mistake each other's voices for a kid. They wake up together; the first Jim in the list
+greets and answers the kids, unless a kid says the other one's name. If a kid sounds scared, both go gentle and the
+banter stops. Give each Jim his own name: a second Jim is still a grumpy Jim-o'-lantern, just called something else.
+**Type to Jim** on the Live tab says something to him as if a kid had.
+
 Camera, mic and speaker changes apply while Jim runs; voice and personality changes need a restart.
 Settings are saved to the selected Jim's file (your comments are kept). The panel itself answers only on
 this PC. To keep it running in the background, install `systemd/jim-panel.service` as a user service. On jt's machine,

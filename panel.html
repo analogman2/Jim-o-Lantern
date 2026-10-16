@@ -95,6 +95,8 @@ svg.dsp{position:absolute;left:0;right:0;bottom:0;width:100%;height:46%;opacity:
 .chart{flex:1;min-height:80px;position:relative;display:flex;flex-direction:column}.chart svg{flex:1;min-height:0}.chart svg{display:block;width:100%}
 .chart text{fill:var(--g-mute);font-size:10px;font-family:inherit}.chart .grid line{stroke:#2c3235;stroke-width:1}
 .legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--g-mute);margin-top:4px}.legend i{display:inline-block;width:10px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.staterow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.staterow .dv{flex:1;min-width:200px}
+.hear{display:flex;gap:6px;flex:1;min-width:260px;max-width:560px}.hear input{background:#111217}
 .pipe{display:flex;height:30px;border-radius:3px;overflow:hidden;background:#22252b;margin:8px 0 4px}
 .pipe i{display:flex;align-items:center;justify-content:center;font-style:normal;font-size:11px;font-weight:600;color:#111217;white-space:nowrap;overflow:hidden;min-width:0}
 table.dtab{width:100%;border-collapse:collapse;font-size:12px}table.dtab th{color:var(--g-blue);font-weight:500;text-align:left;padding:5px 6px;border-bottom:1px solid var(--g-line)}
@@ -123,7 +125,8 @@ table.dtab td{padding:6px;border-bottom:1px solid #22252b;font-variant-numeric:t
    <div class="dp" data-id="e2e" data-stat="e2e" data-w="3" data-h="130"><div class="dt">End to end</div><div class="dv">—</div><div class="ds">kid stops talking → Jim's first sound · median</div><svg class="dsp"></svg></div>
    <div class="dp" data-id="pipe" data-w="9" data-h="130"><div class="dt">Where the time goes <span class="sub">· median of the last replies</span></div>
     <div class="pipe" id="pipe"></div><div class="legend" id="pipeLegend"></div></div>
-   <div class="dp" data-id="state" data-w="12" data-h="80"><div class="dt">State</div><div class="dv" id="stateText" style="font-size:20px">—</div></div>
+   <div class="dp" data-id="state" data-w="12" data-h="80"><div class="dt">State</div><div class="staterow"><div class="dv" id="stateText" style="font-size:20px">—</div>
+    <form id="hearForm" class="hear"><input type="text" id="hearText" placeholder="Type to Jim, as if a kid said it…" autocomplete="off"><button class="b sm go">Say</button></form></div></div>
    <div class="dp" data-id="hearing" data-w="2" data-h="360"><div class="dt">Mic level <select class="dsel" id="liveMicSel" title="the mic Jim listens with"></select></div>
     <div class="vmeter"><div class="vscale"><span style="bottom:100%">0</span><span style="bottom:75%">-20</span><span style="bottom:50%">-40</span><span style="bottom:25%">-60</span><span style="bottom:0">-80</span></div>
      <div class="vbar" id="vbar" title="drag the white line to change when Jim reacts"><i id="lvl"></i><b id="thr"><span id="thrTag"></span></b></div>
@@ -398,6 +401,11 @@ function vmeter(mic) {
     + (floorHigher && thrDrag == null ? `<br><span title="Jim also needs speech to be several times louder than the room's background noise">set to ${Math.round(dbfs(mic.min_rms))} dB; the background noise raises it now</span>` : "");
 }
 let lastMic = null;
+$("hearForm").onsubmit = async e => {
+  e.preventDefault(); const t = $("hearText").value.trim(); if (!t) return;
+  try { await post("/api/hear", {text: t}); $("hearText").value = ""; toast(`Said to ${JIMLIST.find(j => j.id === JIM)?.name || "Jim"}: "${t}"`) }
+  catch (err) { toast(err.message) }
+};
 function smeter(sp) {
   const db = dbfs(sp.level);
   $("spkLvl").style.height = (100 - (sp.playing ? pctDb(db) : 0)) + "%";

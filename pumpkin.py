@@ -382,14 +382,17 @@ class Mic(threading.Thread):
         self.level_t = 0.0               # when the last sound frame arrived (a lost mic stops updating it)
         self.speech_end = 0.0            # when the latest utterance's last loud frame was heard (end-to-end timing)
 
-    def mute(self):
+    def mute(self, why="self"):
+        self.holds = getattr(self, "holds", set()) | {why}
         self.muted.set()
 
-    def unmute(self):
-        # Drop anything heard while the pumpkin itself was talking.
+    def unmute(self, why="self"):
+        # Drop anything heard while a pumpkin was talking; listen again once nobody is.
+        self.holds = getattr(self, "holds", set()) - {why}
         while not self.utterances.empty():
             self.utterances.get_nowait()
-        self.muted.clear()
+        if not self.holds:
+            self.muted.clear()
 
     def set_source(self, source):
         """Listen through another microphone without restarting Jim (picked up within one block)."""
@@ -668,6 +671,7 @@ setInterval(poll,1000);poll();
         self.on_min_rms = None                       # set later: POST /min_rms {"min_rms"}: Jim's trigger level, live
         self.on_volume = None                        # set later: POST /volume {"volume"}: Jim's loudness, live
         self.on_reload = None                        # set later: POST /reload: switch camera/mic/speaker to jim.toml's
+        self.on_duo = None                           # set later: POST /duo/{quiet,said,wake} from a partner Jim; /hear, /wake
         self.port = port
         self.lock = threading.Lock()
         threading.Thread(target=self.serve, args=(port,), daemon=True).start()
@@ -704,6 +708,11 @@ setInterval(poll,1000);poll();
 
             def do_POST(self):
                 # the control panel's buttons; the custom header keeps other websites' forms out
+                if self.path in ("/duo/quiet", "/duo/said", "/duo/wake", "/hear", "/wake") and self.local() \
+                        and self.headers.get("X-Jim-Panel") == "1" and watch.on_duo:
+                    n = int(self.headers.get("Content-Length") or 0)
+                    watch.on_duo(self.path, json.loads(self.rfile.read(n) or b"{}") if n else {})
+                    return self.send(b'{"ok": true}', "application/json")
                 handler = {"/snooze": watch.on_snooze, "/min_rms": watch.on_min_rms, "/volume": watch.on_volume,
                            "/reload": watch.on_reload}.get(self.path)
                 if not self.local() or self.headers.get("X-Jim-Panel") != "1" or not handler:
@@ -992,6 +1001,24 @@ GOODBYES = [
 
 # Code-level safety switch: if a kid sounds scared or upset, force gentle mode for the
 # rest of the conversation instead of trusting the model to notice.
+DUO_RULES = """
+
+You share the driveway with another talking pumpkin right next to you: {partners}. You two are old rivals who \
+bicker constantly but always team up to roast the trick-or-treaters' costumes. When your partner says something, \
+you may tease them or pile on, in one short line. Never repeat what they just said. Lines in [brackets] that start \
+with a pumpkin's name are what your partner said out loud."""
+
+def with_name(prompt, name):
+    """The personality for a pumpkin with another name (a second Jim beside the first): still a grumpy Jim-o'-lantern."""
+    if name == "Jim":
+        return prompt
+    for a, b in (("You are Jim the Jim-o'-lantern", f"You are {name}, a Jim-o'-lantern"),
+                 ("Your name is Jim, and you are a Jim-o'-lantern", f"Your name is {name}, and you are a Jim-o'-lantern"),
+                 ("Introduce yourself proudly as Jim the Jim-o'-lantern", f"Introduce yourself proudly as {name} the Jim-o'-lantern")):
+        prompt = prompt.replace(a, b)
+    return prompt + f"\n\nYour name is {name}. When someone says \"{name}\", they are talking to you."
+
+
 UPSET_RE = re.compile(
     r"\b(scared|(too|so|really|very) scary|you'?re scary|that'?s scary|scare me|afraid|"
     r"frightened|terrified|cry|crying|cried|"
@@ -1079,9 +1106,9 @@ class Brain:
                                          "data": base64.b64encode(image).decode()}},
             {"type": "text", "text": last["content"]}]}]
 
-    def reply_sentences(self, user_text, image=None):
+    def reply_sentences(self, user_text, image=None, from_kid=True):
         """Stream Claude's reply, yielding one sentence at a time."""
-        if UPSET_RE.search(user_text):
+        if from_kid and UPSET_RE.search(user_text):   # only a child's words can switch on gentle mode
             if not self.gentle:
                 print("     (kid sounds scared/upset: gentle mode on)")
             self.gentle = True
@@ -1247,9 +1274,9 @@ class OllamaBrain:
         self._chat([{"role": "system", "content": self.system},
                     {"role": "user", "content": "hi"}], stream=False).read()
 
-    def reply_sentences(self, user_text, image=None):
+    def reply_sentences(self, user_text, image=None, from_kid=True):
         import json
-        if UPSET_RE.search(user_text):
+        if from_kid and UPSET_RE.search(user_text):   # only a child's words can switch on gentle mode
             if not self.gentle:
                 print("     (kid sounds scared/upset: gentle mode on)")
             self.gentle = True
@@ -1754,6 +1781,11 @@ def build_parser():
     p.add_argument("--model", default="claude-opus-5-5", help="Claude model ID (--brain claude)")
     p.add_argument("--effort", default="low", choices=["low", "medium", "high"],
                    help="Claude effort level (low = fastest replies)")
+    p.add_argument("--jim-id", default="", help="this Jim's id in the control panel (the other Jims there are his partners)")
+    p.add_argument("--banter", type=float, default=0.6,
+                   help="with another Jim beside him: how often he answers his partner's lines (0 = never, 1 = always)")
+    p.add_argument("--banter-max", type=int, default=2,
+                   help="at most this many lines of pumpkin-to-pumpkin banter in a row before the kids get a turn")
     p.add_argument("--temperature", type=float, default=0.8,
                    help="Ollama: 0.2 = predictable .. 1.2 = wild and random replies")
     p.add_argument("--house", default="", help='extra context, e.g. "Candy bowl is by the '
@@ -1891,6 +1923,7 @@ def main():
         brain = Brain(args.model, args.effort, args.house)
     brain.max_words = args.max_words
     brain.temperature = args.temperature
+    brain.system = with_name(brain.system, args.name)
     voice.gentle_instruct = args.gentle_voice_design
     voice.volume = max(0.05, min(1.5, args.volume))
     if chatter and args.tts_model == "turbo":
@@ -1932,6 +1965,93 @@ def main():
     if rec:
         print(f"Recording visits to {args.record_dir}/ (kept {args.record_keep_days:g} days)")
 
+    # ---- another Jim beside him (the panel's other Jims): they tell each other what they said directly, and nobody
+    # listens while a pumpkin talks, so they never mistake each other's voices for a kid
+    import urllib.request
+    duo_inbox, _up = queue.Queue(), {}
+    INSTANCES = os.path.expanduser("~/.config/jim/instances.json")
+
+    def jim_list():
+        try:
+            with open(INSTANCES) as f:
+                return json.load(f) if args.jim_id else []
+        except (OSError, ValueError):
+            return []
+
+    def partners():
+        return [(i["name"], f"http://127.0.0.1:{i['watch_port']}") for i in jim_list() if i.get("id") != args.jim_id]
+
+    def partner_up(url):
+        hit = _up.get(url)
+        if hit and time.time() - hit[0] < 3:
+            return hit[1]
+        try:
+            urllib.request.urlopen(url + "/mic.json", timeout=0.3).read(); ok = True
+        except Exception:
+            ok = False
+        _up[url] = (time.time(), ok)
+        return ok
+
+    def live_partners():
+        return [(n, u) for n, u in partners() if partner_up(u)]
+
+    def i_lead():
+        """Of the Jims running, the first in the panel's list answers the kids (the others chime in)."""
+        for i in jim_list():
+            if i.get("id") == args.jim_id:
+                return True
+            if partner_up(f"http://127.0.0.1:{i['watch_port']}"):
+                return False
+        return True
+
+    def tell(path, body, wait=False):
+        for _, url in live_partners():
+            def go(url=url):
+                try:
+                    urllib.request.urlopen(urllib.request.Request(url + path, json.dumps(body).encode(),
+                                           {"Content-Type": "application/json", "X-Jim-Panel": "1"}), timeout=1).read()
+                except Exception:
+                    pass
+            t = threading.Thread(target=go, daemon=True); t.start()
+            if wait:
+                t.join(0.3)
+
+    class Speaking:
+        """While this Jim makes a sound, his partners stop listening; afterwards they hear what he said."""
+        def __init__(self, kind, depth=0, kid=None):
+            self.kind, self.depth, self.kid, self.text = kind, depth, kid, ""
+
+        def __enter__(self):
+            t = time.time()                          # one pumpkin talks at a time: let the partner finish first
+            while "partner" in getattr(mic, "holds", ()) and time.time() - t < 20:
+                time.sleep(0.05)
+            tell("/duo/quiet", {"on": True}, wait=True)
+            return self
+
+        def __exit__(self, *exc):
+            tell("/duo/quiet", {"on": False})
+            if self.text:
+                tell("/duo/said", {"name": args.name, "text": self.text, "kind": self.kind, "depth": self.depth,
+                                   "kid": self.kid, "gentle": brain.gentle})
+
+    def name_in(text, name):
+        return bool(re.search(rf"\b{re.escape(name)}\b", text or "", re.I))
+
+    def who_answers(text):
+        """(should this Jim answer the kid, the partners the kid named). The Jim the kid names answers; otherwise the
+        lead. With partners of the same name, the lead answers."""
+        others = live_partners()
+        if not others:
+            return True, []
+        names = [(n, u) for n, u in others if n.lower() != args.name.lower()]
+        to_me = name_in(text, args.name) and len(names) == len(others)
+        named = [(n, u) for n, u in names if name_in(text, n)]
+        return to_me or (i_lead() and not named), named
+
+    if partners():
+        brain.system += DUO_RULES.format(partners=", ".join(n for n, _ in partners()))
+        print(f"Partners: {', '.join(n for n, _ in partners())} (they hear each other's lines directly)")
+
     def capture():
         """Collect what Jim says next, as played (for the recording)."""
         clips = []
@@ -1955,6 +2075,10 @@ def main():
         return camera.latest() if camera else None
 
     def respond(text, heard=None, t_heard=None, t_end=None):
+        with Speaking("reply", 0, text) as sp:
+            sp.text = respond_(text, heard, t_heard, t_end)
+
+    def respond_(text, heard=None, t_heard=None, t_end=None):
         frame = see()
         if watch and frame:
             watch.judge(frame, None)
@@ -1989,7 +2113,7 @@ def main():
                         seconds=round(took[0], 2) if took else None, gentle=brain.gentle)
             note(f"🧒 \"{text}\" {'(with a camera frame)' if frame else '(no camera frame)'} → 🎃 \"{' '.join(said)}\""
                  + (f" · talking after {took[0]:.2f} s" if took else "") + (" · gentle mode" if brain.gentle else ""))
-            return
+            return " ".join(said)
         face.state = "thinking"
         t0 = time.time()
         reply = " ".join(s.strip() for s in brain.reply_sentences(text, frame)).strip()
@@ -2005,6 +2129,7 @@ def main():
         if rec:
             rec.add("turn", text, frame, heard, played(clips), voice.play_rate, reply=reply,
                     seconds=round(time.time() - t0, 2), gentle=brain.gentle)
+        return reply
 
     if args.type:
         face.state = "idle"
@@ -2111,7 +2236,24 @@ def main():
         if rec:
             rec.end()
 
-    def wake_up():
+    def wake_up(silent=False):
+        """silent: woken with a partner who does the greeting (Jim just bursts to life and listens)."""
+        tell("/duo/wake", {})
+        if not silent and live_partners() and not i_lead():
+            silent = True
+        if silent:
+            mic.mute()
+            print(f"🔥 {args.name} wakes up with his partner!")
+            note("🔥 woke up with his partner (the partner greets)")
+            with Speaking("wake"):
+                face.reveal()
+                voice.play(rumble, mouth=False)
+            brain.reset()
+            face.state = "idle"
+            time.sleep(0.3)
+            mic.unmute()
+            drain(noises)
+            return
         mic.mute()
         print(f"🔥 {args.name} wakes up!")
         # Look at the visitors while the wake-up animation plays, and roast what they're wearing.
@@ -2123,6 +2265,8 @@ def main():
                 seen["seconds"] = round(time.time() - t, 2)
             looker = threading.Thread(daemon=True, target=look)
             looker.start()
+        greet = Speaking("greeting")
+        greet.__enter__()
         face.reveal()
         voice.play(rumble, mouth=False)
         if frame:
@@ -2158,11 +2302,38 @@ def main():
         if rec:
             rec.add("greeting", greeting, frame, None, played(clips), voice.play_rate, roasted=roasted,
                     verdict=verdict, seconds=seen.get("seconds"))
+        greet.text = greeting
+        greet.__exit__()
         brain.prime(greeting)
         face.state = "idle"
         time.sleep(0.3)  # let the speaker's echo die out before listening again
         mic.unmute()
         drain(noises)
+
+    def banter(name, text, depth, kid=None):
+        """Answer the other pumpkin's line with one short jab (or pile on the costume roast)."""
+        mic.mute()
+        face.state = "thinking"
+        old, brain.max_words = brain.max_words, 15
+        ask = (f"[{name} (the other pumpkin, beside you) just said out loud: \"{text}\""
+               + (f", answering a kid who said \"{kid}\"" if kid else "")
+               + f". Answer {name} in ONE short line, under 15 words: tease {name} or pile on the roast of the costumes.]")
+        clips, said = capture(), []
+        with Speaking("banter", depth + 1, kid) as sp:
+            def sentences():
+                for line in brain.reply_sentences(ask, see(), from_kid=False):
+                    print(f"  🎃 (to {name}) {line}")
+                    said.append(line.strip())
+                    yield line
+            voice.say_stream(sentences(), on_start=lambda: setattr(face, "state", "talking"))
+            sp.text = " ".join(said)
+        brain.max_words = old
+        note(f"🎃 (to {name}) \"{' '.join(said)}\"")
+        if rec:
+            rec.add("banter", f"{name}: {text}", None, None, played(clips), voice.play_rate, reply=" ".join(said))
+        face.state = "idle"
+        time.sleep(0.3)
+        mic.unmute()
 
     snooze_until = [0.0]
 
@@ -2218,6 +2389,20 @@ def main():
             return changed
         watch.on_reload = reload_devices
 
+        partner_quiet = [0.0]
+
+        def on_duo(path, b):
+            if path == "/duo/quiet":                 # the other pumpkin is making a sound: don't listen to it
+                if b.get("on"):
+                    partner_quiet[0] = time.time() + 30   # in case the "done" message never comes
+                    mic.mute("partner")
+                else:
+                    partner_quiet[0] = 0.0
+                    mic.unmute("partner")
+            else:
+                duo_inbox.put((path, b))
+        watch.on_duo = on_duo
+
         def speaker_level():
             fresh = time.time() - getattr(voice, "out_t", 0) < 0.4      # nothing written lately: silent
             return {"level": round(getattr(voice, "out_level", 0)) if fresh else 0, "playing": fresh,
@@ -2254,6 +2439,57 @@ def main():
             snoozing = False
             drain(noises)
             print("⏰ Snooze over. Jim is listening again (dark until a noise).")
+        if watch and "partner" in getattr(mic, "holds", ()) and time.time() > partner_quiet[0]:
+            mic.unmute("partner")                    # the partner never said he was done
+        try:
+            path, b = duo_inbox.get_nowait()
+        except queue.Empty:
+            path = None
+        if path:
+            if path in ("/duo/wake", "/wake", "/hear") and mode != "awake":
+                wake_up(silent=path == "/duo/wake")
+                mode, last_heard = "awake", time.time()
+                mode_box[0] = mode
+            if path == "/hear" and (b.get("text") or "").strip():
+                text = b["text"].strip()[:300]
+                print(f"kid (typed)> {text}")
+                mine, named = who_answers(text)
+                if not mine and named:                 # typed to me, but meant for the pumpkin it names: pass it on
+                    print(f"     (passed to {named[0][0]}, who was named)")
+                    brain.history.append({"role": "user", "content": text})
+                    try:
+                        urllib.request.urlopen(urllib.request.Request(named[0][1] + "/hear", json.dumps({"text": text}).encode(),
+                                               {"Content-Type": "application/json", "X-Jim-Panel": "1"}), timeout=1).read()
+                    except Exception:
+                        pass
+                    last_heard = time.time()
+                    continue
+                mic.mute()
+                respond(text)
+                face.state = "idle"
+                mic.unmute()
+                last_heard = time.time()
+            elif path == "/duo/said":
+                name, said_text, kind = b.get("name", "the other pumpkin"), b.get("text", ""), b.get("kind")
+                print(f"  🗣️ {name}: {said_text}")
+                note(f"🗣️ {name}: \"{said_text}\"")
+                if kind == "goodbye":
+                    if mode == "awake":              # the partner said goodbye for both of them
+                        mode = mode_box[0] = "dark"
+                        go_dark()
+                    continue
+                if mode != "awake":
+                    wake_up(silent=True)
+                    mode = mode_box[0] = "awake"
+                last_heard = time.time()
+                if b.get("gentle"):
+                    brain.gentle = voice.gentle = True
+                if not brain.gentle and int(b.get("depth") or 0) < args.banter_max and random.random() < args.banter:
+                    banter(name, said_text, int(b.get("depth") or 0), b.get("kid"))
+                else:                                # just remember it, for the conversation
+                    brain.history.append({"role": "user", "content": f"[{name} said: \"{said_text}\"]"})
+                last_heard = time.time()
+            continue
         if mode in ("dark", "eyes"):
             try:
                 noises.get(timeout=0.5)
@@ -2281,12 +2517,18 @@ def main():
             audio = mic.utterances.get(timeout=0.5)
         except queue.Empty:
             if time.time() - last_heard > args.reset_after and face.state == "idle":
+                if live_partners() and not i_lead():  # the lead says goodbye for both of them
+                    mode = mode_box[0] = "dark"
+                    go_dark()
+                    continue
                 mic.mute()
                 goodbye = next(goodbyes)
                 print(f"  🎃 {goodbye}")
                 face.state = "talking"
                 clips = capture()
-                voice.say(goodbye)
+                with Speaking("goodbye") as sp:
+                    voice.say(goodbye)
+                    sp.text = goodbye
                 if rec:
                     rec.add("goodbye", goodbye, None, None, played(clips), voice.play_rate)
                 mic.unmute()
@@ -2303,6 +2545,15 @@ def main():
             continue
         print(f"kid> {text}   (stt {time.time() - t0:.2f}s)")
         metric("hear", time.time() - t0)
+        mine, named = who_answers(text)
+        if not mine:
+            whom = ", ".join(n for n, _ in named) or "the lead pumpkin"
+            print(f"     (left for {whom} to answer)")
+            note(f"🧒 \"{text}\" (left for {whom})")
+            brain.history.append({"role": "user", "content": text})
+            face.state = "idle"
+            last_heard = time.time()
+            continue
         mic.mute()
         respond(text, audio, t0, t_end)
         face.state = "idle"
