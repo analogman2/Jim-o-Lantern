@@ -140,9 +140,9 @@ Hear Chris: [`samples/chris_demo.wav`](samples/chris_demo.wav).
 
 Camera, mic and speaker changes apply while Jim runs; voice and personality changes need a restart.
 Settings are saved to the selected Jim's file (your comments are kept). The panel itself answers only on
-this PC. To keep it running in the background, install `systemd/jim-panel.service` as a user service. On jt's machine,
-Agentora's sign-in gate (`jim-gate`, Studio admins only) and Tailscale relay make it reachable from other devices at
-`https://<machine>.<tailnet>.ts.net:7885/`.
+this PC. To keep it running in the background, install `systemd/jim-panel.service` as a user service. To reach it
+from other devices, put it behind a sign-in (for example a reverse proxy that requires a login) and your VPN,
+such as Tailscale; never expose it as-is, since it controls the cameras and holds their passwords.
 
 ## Using Jim
 
