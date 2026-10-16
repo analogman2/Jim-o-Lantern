@@ -316,6 +316,8 @@ def save_camera_profile(b):
     else:
         c["id"] = new_id(name, {x["id"] for x in cams}); cams.append(c)
     write_private(CAMERAS_FILE, cams)
+    if c["kind"] == "rtsp":
+        threading.Thread(target=probe_camera_audio, args=([c],), daemon=True).start()
     if active_camera(cams) == c["id"] or b.get("use"):
         use_camera(c["id"])
     return c
@@ -340,7 +342,7 @@ def use_camera(cid):
         RTSP_FILE.chmod(0o600)
 
 
-MIC_KEYS = ("mic", "min_rms", "vad_ratio", "silence", "wled_gain")
+MIC_KEYS = ("mic", "min_rms", "level_mode", "vad_ratio", "silence", "wled_gain")
 
 
 def mics():
@@ -358,7 +360,7 @@ def mics():
 def active_mic(ms=None):
     cfg, opts = load_config(), options()
     cur = {k: cfg.get(k, opts[k]["default"]) for k in MIC_KEYS}
-    return next((m["id"] for m in (ms if ms is not None else mics()) if all(m.get(k) == cur[k] for k in MIC_KEYS)), None)
+    return next((m["id"] for m in (ms if ms is not None else mics()) if all(m.get(k, opts[k]["default"]) == cur[k] for k in MIC_KEYS)), None)
 
 
 def save_mic_profile(b):
@@ -384,7 +386,8 @@ def use_mic(mid):
     m = next((m for m in mics() if m["id"] == mid), None)
     if not m:
         raise ValueError("no such mic")
-    write_settings({k: m[k] for k in MIC_KEYS if m.get(k) is not None})
+    opts = options()
+    write_settings({k: m.get(k, opts[k]["default"]) for k in MIC_KEYS if m.get(k, opts[k]["default"]) is not None})
 
 
 def speakers():
@@ -488,13 +491,40 @@ def devices():
             models = sorted((m["name"].removesuffix(":latest"), f"{m['size'] / 2**30:.1f} GB") for m in json.loads(r.read())["models"])
     except Exception:
         pass
-    return {"mics": [("wled", "the LED controller's mic (patched firmware)")] + alsa_devices("arecord"),
+    cam_mics = [(f"camera:{c['id']}", f"{c['name']}'s microphone (over the network)") for c in read_private(CAMERAS_FILE, [])
+                if c.get("kind") == "rtsp" and CAM_AUDIO.get(c["id"])]
+    return {"mics": [("wled", "the LED controller's mic (patched firmware)")] + alsa_devices("arecord") + cam_mics,
             "speakers": [("default", "system default")] + alsa_devices("aplay"), "cameras": cams, "models": models}
+
+
+CAM_AUDIO = {}                                   # saved camera id -> does its stream carry sound (probed in the background)
+
+
+def probe_camera_audio(cams=None):
+    """Which saved security cameras have a microphone (an audio track in their stream)."""
+    for c in cams if cams is not None else read_private(CAMERAS_FILE, []):
+        if c.get("kind") != "rtsp":
+            continue
+        try:
+            r = subprocess.run(["ffprobe", "-v", "error", "-rtsp_transport", "tcp", "-select_streams", "a", "-show_entries", "stream=codec_type",
+                                "-of", "csv=p=0", camera_url(c)], capture_output=True, text=True, timeout=20)
+            CAM_AUDIO[c["id"]] = "audio" in r.stdout
+        except Exception:
+            CAM_AUDIO.setdefault(c["id"], False)
 
 
 def mic_test(device, seconds=3.0):
     """Record a few seconds and report the loudness Jim's ears would measure (30 ms frames, like pumpkin.Mic)."""
-    if device == "wled":
+    if device.startswith("camera:"):
+        c = next((c for c in cameras() if c["id"] == device[7:] and c["kind"] == "rtsp"), None)
+        if not c:
+            raise ValueError("no such camera")
+        r = subprocess.run(["ffmpeg", "-loglevel", "quiet", "-rtsp_transport", "tcp", "-allowed_media_types", "audio", "-i", camera_url(c),
+                            "-t", str(seconds), "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-"], capture_output=True, timeout=seconds + 20)
+        if not r.stdout:
+            raise ValueError("no sound from the camera (no microphone, or it didn't answer)")
+        rate, audio = 16000, np.frombuffer(r.stdout, "<i2").astype(np.float32)
+    elif device == "wled":
         host = load_config().get("wled")
         if not host:
             raise ValueError("set the LED controller's address first")
@@ -517,6 +547,8 @@ def mic_test(device, seconds=3.0):
     if not frames:
         raise ValueError("no sound came in")
     rms = np.array([float(np.sqrt(np.mean(f ** 2))) for f in frames])
+    if device.startswith("camera:") and rms.max() == 0:
+        raise ValueError("the camera sends a silent sound track: turn its microphone on in the camera's app (Reolink: Record Audio)")
     noise, loud = float(np.percentile(rms, 20)), float(rms.max())
     return {"noise": round(noise), "loudest": round(loud), "suggested_min_rms": int(max(150, noise * 3)),
             "levels": [round(x) for x in rms[:: max(1, len(rms) // 100)]]}
@@ -872,10 +904,10 @@ class Panel(BaseHTTPRequestHandler):
                 ms, mid = mics(), active_mic()
                 for m in ms:
                     if m["id"] == mid:
-                        m["min_rms"] = v
+                        m["min_rms"], m["level_mode"] = v, "fixed"
                 write_private(MICS_FILE, ms)
-                write_settings({"min_rms": v})
-                live = jim_post("/min_rms", {"min_rms": v})
+                write_settings({"min_rms": v, "level_mode": "fixed"})
+                live = jim_post("/min_rms", {"min_rms": v, "fixed": True})
                 return self.send(200, {"ok": True, "min_rms": v, "live": live})
             if path == "/api/snooze":
                 return self.proxy("/snooze", "POST", json.dumps({"seconds": b.get("seconds", 10)}).encode())
@@ -972,6 +1004,7 @@ if __name__ == "__main__":
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(sig, bye)
     threading.Thread(target=network_loop, daemon=True).start()
+    threading.Thread(target=probe_camera_audio, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", A.port), Panel)
     server.daemon_threads = True
     print(f"Jim's control panel: http://127.0.0.1:{A.port}  (Ctrl+C stops the panel and Jim)")

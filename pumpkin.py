@@ -246,6 +246,45 @@ def alsa_source(device):
     return MIC_RATE, gen()
 
 
+CAMERAS_FILE = os.path.expanduser("~/.config/jim/cameras.json")   # saved cameras (control panel), with passwords
+
+
+def camera_audio_url(cam_id):
+    """The RTSP address of a saved security camera, for its built-in microphone (mic = "camera:<id>")."""
+    import urllib.parse
+    try:
+        with open(CAMERAS_FILE) as f:
+            c = next(c for c in json.load(f) if c.get("id") == cam_id and c.get("kind") == "rtsp")
+    except (OSError, ValueError, StopIteration):
+        sys.exit(f"No saved security camera '{cam_id}' for the microphone (control panel: Camera tab).")
+    q = lambda v: urllib.parse.quote(v, safe="")
+    return f"rtsp://{q(c['user'])}:{q(c['password'])}@{c['ip']}:554/{c['path']}"
+
+
+def rtsp_audio_source(url, name):
+    """Yield int16 sample blocks (16 kHz mono) from a network camera's microphone: only its audio track is fetched.
+    Reconnects when the camera drops out. Never prints the address (it holds the password)."""
+    def gen():
+        lost = False
+        while True:
+            proc = subprocess.Popen(["ffmpeg", "-loglevel", "quiet", "-rtsp_transport", "tcp", "-allowed_media_types", "audio",
+                                     "-fflags", "nobuffer", "-flags", "low_delay", "-i", url, "-vn", "-ac", "1",
+                                     "-ar", str(MIC_RATE), "-f", "s16le", "-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            got = 0
+            while len(data := proc.stdout.read(960)) == 960:
+                if lost and not got:
+                    print(f"[mic] {name}'s microphone is back", file=sys.stderr, flush=True)
+                    lost = False
+                got += 1
+                yield np.frombuffer(data, np.int16)
+            proc.kill(); proc.wait()
+            if not lost:
+                print(f"[mic] lost {name}'s microphone; retrying every 3 s", file=sys.stderr, flush=True)
+                lost = True
+            time.sleep(3)
+    return MIC_RATE, gen()
+
+
 def wled_source(host, gain=16):
     """Yield int16 sample blocks streamed by the patched WLED firmware.
     We send a "PMIC" subscribe packet every second; WLED streams to us while
@@ -310,6 +349,7 @@ class Mic(threading.Thread):
         self.in_speech = False  # someone is talking right now
         self.debug_levels = False
         self.level = self.thresh = 0.0  # latest loudness and the current trigger level (for the panel)
+        self.fixed = False               # --level-mode fixed: the trigger level is min_rms, whatever the background
         self.level_t = 0.0               # when the last sound frame arrived (a lost mic stops updating it)
         self.speech_end = 0.0            # when the latest utterance's last loud frame was heard (end-to-end timing)
 
@@ -350,7 +390,7 @@ class Mic(threading.Thread):
                 self.level, self.level_t = max(rms, self.level * 0.85), time.time()
                 preroll, speech, loud_run, in_speech = [], [], 0, False
                 continue
-            thresh = max(floor * self.vad_ratio, self.min_rms)
+            thresh = self.min_rms if self.fixed else max(floor * self.vad_ratio, self.min_rms)
             self.level, self.thresh = max(rms, self.level * 0.85), thresh   # a peak meter that falls back
             self.level_t = time.time()
             loud = rms > thresh
@@ -604,7 +644,7 @@ setInterval(poll,1000);poll();
                 elif self.path == "/volume":
                     handler(max(0.05, min(1.5, float(b["volume"]))))
                 else:
-                    handler(max(20.0, min(30000.0, float(b["min_rms"]))))
+                    handler(max(20.0, min(30000.0, float(b["min_rms"]))), b.get("fixed"))
                 self.send(b'{"ok": true}', "application/json")
 
             def do_GET(self):
@@ -1639,6 +1679,9 @@ def build_parser():
                    help="Ollama: 0.2 = predictable .. 1.2 = wild and random replies")
     p.add_argument("--house", default="", help='extra context, e.g. "Candy bowl is by the '
                    'door, two pieces each."')
+    p.add_argument("--level-mode", default="auto", choices=["auto", "fixed"],
+                   help="fixed = Jim reacts above --min-rms exactly; auto = also only to sound well above the "
+                        "room's background noise (--vad-ratio), so the level rises when it's noisy")
     p.add_argument("--vad-ratio", type=float, default=4.0,
                    help="sound must be this many times louder than background noise")
     p.add_argument("--min-rms", type=float, default=None,
@@ -1952,10 +1995,16 @@ def main():
 
     if args.min_rms is None:
         args.min_rms = 500 if args.mic == "wled" else 300
-    source = wled_source(args.wled, args.wled_gain) if args.mic == "wled" else alsa_source(args.mic)
+    if args.mic == "wled":
+        source = wled_source(args.wled, args.wled_gain)
+    elif args.mic.startswith("camera:"):
+        source = rtsp_audio_source(camera_audio_url(args.mic[7:]), args.mic[7:])
+    else:
+        source = alsa_source(args.mic)
     mic = Mic(source, args.vad_ratio, args.min_rms, args.silence, on_speech_start,
               on_noise=lambda: noises.put(time.time()))
     mic.debug_levels = args.levels
+    mic.fixed = args.level_mode == "fixed"
     mic.start()
 
     def drain(q):
@@ -2038,9 +2087,11 @@ def main():
     if watch:
         watch.on_snooze = snooze
 
-        def set_min_rms(v):
+        def set_min_rms(v, fixed=None):
             mic.min_rms = v
-            print(f"[mic] reaction level set to {v:.0f} from the control panel", flush=True)
+            if fixed is not None:
+                mic.fixed = fixed
+            print(f"[mic] reaction level set to {v:.0f}{' (fixed)' if mic.fixed else ''} from the control panel", flush=True)
         watch.on_min_rms = set_min_rms
 
         def set_volume(v):
@@ -2052,7 +2103,7 @@ def main():
             fresh = time.time() - getattr(voice, "out_t", 0) < 0.4      # nothing written lately: silent
             return {"level": round(getattr(voice, "out_level", 0)) if fresh else 0, "playing": fresh,
                     "volume": round(getattr(voice, "volume", 1.0), 3), "device": args.speaker}
-        watch.extra = lambda: {"mic": {"level": round(mic.level), "thresh": round(mic.thresh), "min_rms": round(mic.min_rms),
+        watch.extra = lambda: {"mic": {"level": round(mic.level), "thresh": round(mic.thresh), "min_rms": round(mic.min_rms), "fixed": mic.fixed,
                                        "age_s": round(time.time() - mic.level_t, 1) if mic.level_t else None,
                                        "muted": mic.muted.is_set()},
                                "speaker": speaker_level(),

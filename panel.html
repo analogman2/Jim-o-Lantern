@@ -169,7 +169,10 @@ table.dtab td{padding:6px;border-bottom:1px solid #22252b;font-variant-numeric:t
    <div class="field"><label>Name</label><input type="text" id="mfName" placeholder="Porch mic"></div>
    <div class="field"><label>Device</label><select id="mfDev"></select></div>
    <div class="field"><label>Minimum loudness</label><input type="number" id="mfMin" min="50" step="10" placeholder="automatic"><div class="help" id="mfMinHelp">Jim ignores anything quieter. Use "Test 3 s" to measure.</div></div>
-   <div class="field"><label>Louder than the background by (×)</label><input type="number" id="mfVad" step="0.5" min="1"><div class="help">4 = speech must be 4× louder than the room's noise</div></div>
+   <div class="field"><label>Reaction level</label><select id="mfMode"><option value="fixed">Fixed: exactly the minimum loudness above</option>
+    <option value="auto">Automatic: also rises with the room's background noise</option></select>
+    <div class="help">Dragging the line on the Live page sets it fixed.</div></div>
+   <div class="field"><label>Louder than the background by (×) <span class="sub">(automatic only)</span></label><input type="number" id="mfVad" step="0.5" min="1"><div class="help">4 = speech must be 4× louder than the room's noise</div></div>
    <div class="field"><label>Pause that ends a sentence (s)</label><input type="number" id="mfSil" step="0.1" min="0.3"></div>
    <div class="field"><label>LED controller mic gain (1–255)</label><input type="number" id="mfGain" min="1" max="255"><div class="help">only for the LED controller's own mic</div></div>
    <div class="row"><button class="b go" id="mfSave">Save</button><button class="b" id="mfSaveUse">Save and use</button><button class="b" id="mfCancel">Cancel</button></div></div>
@@ -341,9 +344,9 @@ function vmeter(mic) {
   $("lvl").style.height = (100 - pctDb(db)) + "%"; $("thr").style.bottom = `calc(${pctDb(th)}% - 1px)`;
   $("thrTag").textContent = Math.round(th) + " dB";
   $("lvlDb").textContent = db <= -89 ? "—" : Math.round(db) + " dB"; $("lvlDb").style.color = on ? "#73bf69" : "#8e8e9a";
-  const floorHigher = mic.min_rms && mic.thresh > mic.min_rms * 1.05;
+  const floorHigher = !mic.fixed && mic.min_rms && mic.thresh > mic.min_rms * 1.05;
   if (mic.muted) { $("lvlDb").style.color = "#8e8e9a"; $("lvlText").innerHTML = "ears paused while Jim talks<br>(so he doesn't hear himself)"; return }
-  $("lvlText").innerHTML = `Jim reacts above <b>${Math.round(th)} dB</b>` + (on ? "<br>hearing something" : "")
+  $("lvlText").innerHTML = `Jim reacts above <b>${Math.round(th)} dB</b>${mic.fixed ? " (fixed)" : ""}` + (on ? "<br>hearing something" : "")
     + (floorHigher && thrDrag == null ? `<br><span title="Jim also needs speech to be several times louder than the room's background noise">set to ${Math.round(dbfs(mic.min_rms))} dB; the background noise raises it now</span>` : "");
 }
 let lastMic = null;
@@ -366,7 +369,7 @@ $("vbar").addEventListener("pointerdown", e => {
   const up = async () => {
     bar.classList.remove("dragging"); bar.removeEventListener("pointermove", move); bar.removeEventListener("pointerup", up);
     const rms = Math.round(32768 * Math.pow(10, thrDrag / 20)), db = Math.round(thrDrag);
-    try { const d = await (await post("/api/mic/level", {min_rms: rms})).json(); toast(`Jim now reacts above ${db} dB (${d.min_rms})` + (d.live ? "." : ": saved; restart Jim to use it.")) }
+    try { const d = await (await post("/api/mic/level", {min_rms: rms})).json(); toast(`Jim now reacts above ${db} dB, fixed` + (d.live ? "." : ": saved; restart Jim to use it.")); loadMics() }
     catch (err) { toast("Not changed: " + err.message) }
     setTimeout(() => { thrDrag = null }, 1200);                 // until Jim reports the new level
   };
@@ -728,7 +731,7 @@ function paintMics() {
   const desc = d => (MICS.devices.find(([x]) => x === d) || [d, d])[1] || d;
   $("mics").innerHTML = MICS.mics.map(m => `<div class="camcard ${m.id === MICS.active ? "active" : ""}" data-mic="${esc(m.id)}">
     <div><b>${esc(m.name)}</b>${m.id === MICS.active ? '<span class="badge">In use</span>' : ""}<div class="sub">${esc(desc(m.mic))}</div></div>
-    <div class="sub">Reacts above ${m.min_rms ? `${m.min_rms} (${toDb(m.min_rms)} dB)` : "automatic"} · ${m.vad_ratio}× the background · sentence ends after ${m.silence} s</div>
+    <div class="sub">Reacts above ${m.min_rms ? `${m.min_rms} (${toDb(m.min_rms)} dB)` : "the default"} · ${m.level_mode === "fixed" ? "fixed" : `automatic (${m.vad_ratio}× the background)`} · sentence ends after ${m.silence} s</div>
     <div class="row">${m.id !== MICS.active ? '<button class="b sm go" data-act="use">Use</button>' : ""}<button class="b sm" data-act="test">Test 3 s</button>
      <button class="b sm" data-act="edit">Edit</button><button class="b sm" data-act="del">Delete</button></div></div>`).join("")
     || `<div class="muted">No mics saved yet: add one.</div>`;
@@ -738,6 +741,7 @@ function micForm(m) {
   $("mfTitle").textContent = m ? "Edit " + m.name : "Add a mic";
   $("mfDev").innerHTML = MICS.devices.map(([d, n]) => `<option value="${esc(d)}">${esc(n || d)}${n ? " — " + esc(d) : ""}</option>`).join("");
   $("mfName").value = m?.name || ""; if (m) $("mfDev").value = m.mic;
+  $("mfMode").value = m?.level_mode || "auto";
   $("mfMin").value = m?.min_rms ?? ""; $("mfVad").value = m?.vad_ratio ?? 4; $("mfSil").value = m?.silence ?? 1.5; $("mfGain").value = m?.wled_gain ?? 16;
   minHelp(); $("micForm").scrollIntoView({behavior: "smooth"});
 }
@@ -747,7 +751,7 @@ $("micAdd").onclick = () => micForm(null);
 $("mfCancel").onclick = () => { $("micForm").style.display = "none" };
 async function saveMic(use) {
   const num = id => $(id).value === "" ? null : +$(id).value;
-  const body = {id: editingMic, name: $("mfName").value, mic: $("mfDev").value, min_rms: num("mfMin"), vad_ratio: num("mfVad") ?? 4,
+  const body = {id: editingMic, name: $("mfName").value, mic: $("mfDev").value, min_rms: num("mfMin"), level_mode: $("mfMode").value, vad_ratio: num("mfVad") ?? 4,
                 silence: num("mfSil") ?? 1.5, wled_gain: num("mfGain") ?? 16, use};
   try { const d = await (await post("/api/mics", body)).json(); $("micForm").style.display = "none"; await loadMics();
         toast((use || d.mic.id === MICS.active) && d.restart ? "Saved. Restart Jim to listen with it." : "Mic saved.", (use || d.mic.id === MICS.active) && d.restart) }
