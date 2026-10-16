@@ -654,7 +654,7 @@ async function useFromLive(kind, id) {
   try {
     const d = await (await post(`/api/${kind}/${encodeURIComponent(id)}/use`)).json();
     await ({cameras: () => loadCams(false), mics: loadMics, speakers: loadSpeakers}[kind])();
-    toast(d.restart ? `${item.name} chosen. Restart Jim to ${{cameras: "look through", mics: "listen with", speakers: "talk through"}[kind]} it.` : `${item.name} is in use.`, d.restart);
+    toast(d.live ? `Jim is now ${{cameras: "looking through", mics: "listening with", speakers: "talking through"}[kind]} ${item.name}.` : `${item.name} is in use (from Jim's next start).`);
   } catch (e) { toast(e.message); liveSelects() }
 }
 $("liveCamSel").onchange = e => useFromLive("cameras", e.target.value);
@@ -708,7 +708,7 @@ $("cams").addEventListener("click", async e => {
   if (act === "snap") snap(id);
   if (act === "live") camLive(c);
   if (act === "edit") camForm(c);
-  if (act === "use") { try { const d = await (await post(`/api/cameras/${encodeURIComponent(id)}/use`)).json(); await loadCams(false); CAMS.cameras.forEach(x => snap(x.id)); toast(d.restart ? `Jim will look through ${c.name} after a restart.` : `${c.name} is in use.`, d.restart) } catch (err) { toast(err.message) } }
+  if (act === "use") { await useFromLive("cameras", id); CAMS.cameras.forEach(x => snap(x.id)) }
   if (act === "del" && confirm(`Delete ${c.name}?`)) { await api(`/api/cameras/${encodeURIComponent(id)}`, {method: "DELETE"}); loadCams(true) }
 });
 function camLive(c) {
@@ -762,7 +762,7 @@ $("mics").addEventListener("click", async e => {
   const act = e.target.dataset?.act, card = e.target.closest("[data-mic]"); if (!act || !card) return;
   const m = MICS.mics.find(x => x.id === card.dataset.mic);
   if (act === "edit") micForm(m);
-  if (act === "use") { try { const d = await (await post(`/api/mics/${encodeURIComponent(m.id)}/use`)).json(); await loadMics(); toast(d.restart ? `Jim will listen with ${m.name} after a restart.` : `${m.name} is in use.`, d.restart) } catch (err) { toast(err.message) } }
+  if (act === "use") useFromLive("mics", m.id);
   if (act === "del" && confirm(`Delete ${m.name}?`)) { await api(`/api/mics/${encodeURIComponent(m.id)}`, {method: "DELETE"}); loadMics() }
   if (act === "test") {
     $("micResult").textContent = `Recording 3 s with ${m.name}…`; $("micBars").innerHTML = ""; $("micTestNote").textContent = "";

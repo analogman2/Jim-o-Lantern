@@ -330,6 +330,7 @@ def use_camera(cid):
         raise ValueError("no such camera")
     if c["kind"] == "usb":
         write_settings({"camera_source": "usb", "usb_camera": c["device"]})
+        return reload_jim()
     else:
         write_settings({"camera_source": "rtsp"})
         write_settings({"ip": c["ip"], "user": c["user"], "path": c["path"]}, section="camera")
@@ -340,6 +341,12 @@ def use_camera(cid):
         finally:
             os.umask(old)
         RTSP_FILE.chmod(0o600)
+    return reload_jim()
+
+
+def reload_jim():
+    """Jim switches to the camera, mic and speaker now in jim.toml (no restart). False if he isn't running."""
+    return jim_post("/reload", {})
 
 
 MIC_KEYS = ("mic", "min_rms", "level_mode", "vad_ratio", "silence", "wled_gain")
@@ -388,6 +395,7 @@ def use_mic(mid):
         raise ValueError("no such mic")
     opts = options()
     write_settings({k: m.get(k, opts[k]["default"]) for k in MIC_KEYS if m.get(k, opts[k]["default"]) is not None})
+    return reload_jim()
 
 
 def speakers():
@@ -430,7 +438,7 @@ def use_speaker(sid):
     if not x:
         raise ValueError("no such speaker")
     write_settings({"speaker": x["speaker"], "volume": x["volume"]})
-    jim_post("/volume", {"volume": x["volume"]})                    # the device itself changes at Jim's next start
+    return reload_jim()
 
 
 def jim_post(path, body):
@@ -922,25 +930,28 @@ class Panel(BaseHTTPRequestHandler):
                     except (TypeError, ValueError) as e:
                         raise ValueError(f"{k}: {e}")
                 write_settings(vals)
+                live_keys = {"camera_crop", "camera_source", "usb_camera"}
+                if set(vals) <= live_keys:
+                    return self.send(200, {"ok": True, "restart": False, "live": reload_jim()})
                 return self.send(200, {"ok": True, "restart": jim.running()})
             if path == "/api/camera":
                 save_camera(b.get("ip", "").strip(), b.get("user", "").strip(), b.get("path", "").strip().lstrip("/"),
                             b.get("password") or None)
                 return self.send(200, {"ok": True, "camera": camera_settings(), "restart": jim.running()})
             if path == "/api/cameras":
-                return self.send(200, {"camera": public_camera(save_camera_profile(b)), "restart": jim.running()})
+                return self.send(200, {"camera": public_camera(save_camera_profile(b)), "restart": False})
             m = re.fullmatch(r"/api/cameras/([\w-]+)/use", path)
             if m:
-                use_camera(m.group(1)); return self.send(200, {"ok": True, "restart": jim.running()})
+                live = use_camera(m.group(1)); return self.send(200, {"ok": True, "live": live, "restart": False})
             if path == "/api/mics":
-                return self.send(200, {"mic": save_mic_profile(b), "restart": jim.running()})
+                return self.send(200, {"mic": save_mic_profile(b), "restart": False})
             if path == "/api/speakers":
                 x = save_speaker_profile(b)
-                return self.send(200, {"speaker": x, "restart": jim.running() and b.get("use")})
+                return self.send(200, {"speaker": x, "restart": False})
             m = re.fullmatch(r"/api/speakers/([\w-]+)/(use|test)", path)
             if m:
                 if m.group(2) == "use":
-                    use_speaker(m.group(1)); return self.send(200, {"ok": True, "restart": jim.running()})
+                    live = use_speaker(m.group(1)); return self.send(200, {"ok": True, "live": live, "restart": False})
                 x = next((x for x in speakers() if x["id"] == m.group(1)), None)
                 if not x:
                     raise ValueError("no such speaker")
@@ -956,7 +967,7 @@ class Panel(BaseHTTPRequestHandler):
                 return self.send(200, {"ok": True, "volume": v, "live": jim_post("/volume", {"volume": v})})
             m = re.fullmatch(r"/api/mics/([\w-]+)/use", path)
             if m:
-                use_mic(m.group(1)); return self.send(200, {"ok": True, "restart": jim.running()})
+                live = use_mic(m.group(1)); return self.send(200, {"ok": True, "live": live, "restart": False})
             if path == "/api/camera/test":
                 cfg = load_config()
                 source = b.get("source") or cfg.get("camera_source", "auto")

@@ -232,13 +232,15 @@ def alsa_source(device):
                                      "-r", str(MIC_RATE), "-c", "1", "-t", "raw"],
                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             got = 0
-            while len(data := proc.stdout.read(960)) == 960:
-                if lost and not got:
-                    print("[mic] the microphone is back", file=sys.stderr, flush=True)
-                    lost = False
-                got += 1
-                yield np.frombuffer(data, np.int16)
-            proc.wait()
+            try:
+                while len(data := proc.stdout.read(960)) == 960:
+                    if lost and not got:
+                        print("[mic] the microphone is back", file=sys.stderr, flush=True)
+                        lost = False
+                    got += 1
+                    yield np.frombuffer(data, np.int16)
+            finally:                                 # also when Jim switches to another mic
+                proc.kill(); proc.wait()
             if not lost:
                 print(f"[mic] lost the microphone ({device}); retrying every 3 s", file=sys.stderr, flush=True)
                 lost = True
@@ -271,13 +273,15 @@ def rtsp_audio_source(url, name):
                                      "-fflags", "nobuffer", "-flags", "low_delay", "-i", url, "-vn", "-ac", "1",
                                      "-ar", str(MIC_RATE), "-f", "s16le", "-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             got = 0
-            while len(data := proc.stdout.read(960)) == 960:
-                if lost and not got:
-                    print(f"[mic] {name}'s microphone is back", file=sys.stderr, flush=True)
-                    lost = False
-                got += 1
-                yield np.frombuffer(data, np.int16)
-            proc.kill(); proc.wait()
+            try:
+                while len(data := proc.stdout.read(960)) == 960:
+                    if lost and not got:
+                        print(f"[mic] {name}'s microphone is back", file=sys.stderr, flush=True)
+                        lost = False
+                    got += 1
+                    yield np.frombuffer(data, np.int16)
+            finally:
+                proc.kill(); proc.wait()
             if not lost:
                 print(f"[mic] lost {name}'s microphone; retrying every 3 s", file=sys.stderr, flush=True)
                 lost = True
@@ -362,13 +366,39 @@ class Mic(threading.Thread):
             self.utterances.get_nowait()
         self.muted.clear()
 
+    def set_source(self, source):
+        """Listen through another microphone without restarting Jim (picked up within one block)."""
+        self.pending = source
+
     def frames(self):
-        buf = np.zeros(0, np.float32)
-        for block in self.blocks:
-            buf = np.concatenate([buf, block.astype(np.float32)])
-            while len(buf) >= self.frame:
-                f, buf = buf[:self.frame], buf[self.frame:]
-                yield f - f.mean()  # strip DC offset (PDM mics often have one)
+        self.pending = None
+        while True:
+            q, blocks, stop = queue.Queue(maxsize=100), self.blocks, threading.Event()
+
+            def pump(blocks=blocks, q=q, stop=stop):
+                # read the source in its own thread, so a switch never waits on a mic that has gone quiet or away
+                try:
+                    for block in blocks:
+                        if stop.is_set():
+                            break
+                        q.put(block)
+                finally:
+                    blocks.close()                   # the old mic's recorder stops and frees the device
+            threading.Thread(target=pump, daemon=True).start()
+            buf = np.zeros(0, np.float32)
+            while not self.pending:
+                try:
+                    block = q.get(timeout=0.2)
+                except queue.Empty:
+                    continue
+                buf = np.concatenate([buf, block.astype(np.float32)])
+                while len(buf) >= self.frame:
+                    f, buf = buf[:self.frame], buf[self.frame:]
+                    yield f - f.mean()  # strip DC offset (PDM mics often have one)
+            stop.set()
+            (self.rate, self.blocks), self.pending = self.pending, None
+            self.frame = int(self.rate * 0.03)
+            self.level_t = 0.0
 
     def to_16k(self, audio):
         if self.rate == MIC_RATE:
@@ -465,7 +495,7 @@ class Camera(threading.Thread):
             recent = [t for t in self.times if now - t < 5]
             age = now - self.frame_time if self.frame_time else None
         return {"fps": round(len(recent) / 5, 1), "age_s": round(age, 1) if age is not None else None,
-                "reconnects": self.reconnects, "kind": "usb" if self.url.startswith("/dev/") else "rtsp"}
+                "reconnects": self.reconnects, "kind": "usb" if (self.url or "").startswith("/dev/") else "rtsp" if self.url else "none"}
 
     def latest(self, max_age=3.0):
         """The newest frame (JPEG bytes) if it's fresh, else None."""
@@ -474,20 +504,32 @@ class Camera(threading.Thread):
                 return self.frame
         return None
 
+    def set_url(self, url, crop=None):
+        """Look through another camera (None = blind) without restarting Jim."""
+        self.url, self.crop = url, crop
+        with self.lock:
+            self.frame, self.frame_time, self.times = None, 0.0, []
+        proc = getattr(self, "proc", None)
+        if proc and proc.poll() is None:
+            proc.kill()                              # the loop below starts the new feed
+
     def run(self):
-        vf = f"fps={self.fps},scale={self.width}:-2"
-        if self.crop:
-            x, y, w, h = self.crop
-            vf = f"crop=iw*{w}:ih*{h}:iw*{x}:ih*{y}," + vf
-        if self.url.startswith("/dev/"):             # a USB webcam
-            src = ["-f", "v4l2", "-input_format", "mjpeg", "-video_size", "848x480", "-i", self.url]
-        else:                                        # the security camera (RTSP)
-            src = ["-rtsp_transport", "tcp", "-i", self.url]
-        cmd = ["ffmpeg", "-loglevel", "error", *src,
-               "-an", "-vf", vf, "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "4", "-"]
         warned = False
         while True:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            url = self.url
+            if not url:
+                time.sleep(0.5)
+                continue
+            vf = f"fps={self.fps},scale={self.width}:-2"
+            if self.crop:
+                x, y, w, h = self.crop
+                vf = f"crop=iw*{w}:ih*{h}:iw*{x}:ih*{y}," + vf
+            if url.startswith("/dev/"):              # a USB webcam
+                src = ["-f", "v4l2", "-input_format", "mjpeg", "-video_size", "848x480", "-i", url]
+            else:                                    # the security camera (RTSP)
+                src = ["-rtsp_transport", "tcp", "-i", url]
+            self.proc = proc = subprocess.Popen(["ffmpeg", "-loglevel", "error", *src, "-an", "-vf", vf, "-f", "image2pipe",
+                                                 "-vcodec", "mjpeg", "-q:v", "4", "-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             buf = b""
             while chunk := proc.stdout.read(65536):
                 buf += chunk
@@ -504,6 +546,8 @@ class Camera(threading.Thread):
                         warned = False
                     buf = buf[end + 2:]
             proc.wait()
+            if url != self.url:                      # switched on purpose: start the new one at once
+                continue
             self.reconnects += 1
             if not warned:  # never print the URL: it contains the password
                 print("[camera] lost the feed; retrying every 5 s", file=sys.stderr)
@@ -598,6 +642,7 @@ setInterval(poll,1000);poll();
         self.on_snooze = None                        # set later: POST /snooze {"seconds"}
         self.on_min_rms = None                       # set later: POST /min_rms {"min_rms"}: Jim's trigger level, live
         self.on_volume = None                        # set later: POST /volume {"volume"}: Jim's loudness, live
+        self.on_reload = None                        # set later: POST /reload: switch camera/mic/speaker to jim.toml's
         self.port = port
         self.lock = threading.Lock()
         threading.Thread(target=self.serve, args=(port,), daemon=True).start()
@@ -634,11 +679,14 @@ setInterval(poll,1000);poll();
 
             def do_POST(self):
                 # the control panel's buttons; the custom header keeps other websites' forms out
-                handler = {"/snooze": watch.on_snooze, "/min_rms": watch.on_min_rms, "/volume": watch.on_volume}.get(self.path)
+                handler = {"/snooze": watch.on_snooze, "/min_rms": watch.on_min_rms, "/volume": watch.on_volume,
+                           "/reload": watch.on_reload}.get(self.path)
                 if not self.local() or self.headers.get("X-Jim-Panel") != "1" or not handler:
                     self.send_response(403); self.end_headers(); return
                 n = int(self.headers.get("Content-Length") or 0)
                 b = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                if self.path == "/reload":
+                    return self.send(json.dumps({"changed": handler()}).encode(), "application/json")
                 if self.path == "/snooze":
                     handler(float(b.get("seconds") or 10))
                 elif self.path == "/volume":
@@ -1815,15 +1863,18 @@ def main():
                          "tags inline, at most once per reply: " +
                          ", ".join(f"[{t}]" for t in SOUND_TAGS) +
                          ". Example: \"Oh, that's hilarious. [groan] Not.\"")
-    camera = None
-    cam_source = "none" if args.no_camera else args.camera_source
-    url = args.usb_camera if cam_source == "usb" else camera_url() if cam_source in ("auto", "rtsp") else None
-    if cam_source == "rtsp" and not url:
-        print("[camera] no security camera saved yet (./set_camera.sh or the control panel): Jim is blind", file=sys.stderr)
+    def camera_choice(a):
+        """(url or None, crop) for these settings."""
+        src = "none" if a.no_camera else a.camera_source
+        url = a.usb_camera if src == "usb" else camera_url() if src in ("auto", "rtsp") else None
+        if src == "rtsp" and not url:
+            print("[camera] no security camera saved yet (./set_camera.sh or the control panel): Jim is blind", file=sys.stderr)
+        return url, tuple(float(v) for v in a.camera_crop.split(",")) if a.camera_crop else None
+
+    url, crop = camera_choice(args)
+    camera = Camera(url, crop, args.camera_width)        # always there, so the panel can switch cameras while he runs
+    camera.start()
     if url:
-        crop = tuple(float(v) for v in args.camera_crop.split(",")) if args.camera_crop else None
-        camera = Camera(url, crop, args.camera_width)
-        camera.start()
         brain.system += VISION_RULES
         print("Camera on (" + ("USB webcam" if url.startswith("/dev/") else "security camera") + "): Jim can see costumes.")
     mode_box = ["dark"]                                # the main loop's mode, for the viewer
@@ -1995,12 +2046,13 @@ def main():
 
     if args.min_rms is None:
         args.min_rms = 500 if args.mic == "wled" else 300
-    if args.mic == "wled":
-        source = wled_source(args.wled, args.wled_gain)
-    elif args.mic.startswith("camera:"):
-        source = rtsp_audio_source(camera_audio_url(args.mic[7:]), args.mic[7:])
-    else:
-        source = alsa_source(args.mic)
+    def mic_source(a):
+        if a.mic == "wled":
+            return wled_source(a.wled, a.wled_gain)
+        if a.mic.startswith("camera:"):
+            return rtsp_audio_source(camera_audio_url(a.mic[7:]), a.mic[7:])
+        return alsa_source(a.mic)
+    source = mic_source(args)
     mic = Mic(source, args.vad_ratio, args.min_rms, args.silence, on_speech_start,
               on_noise=lambda: noises.put(time.time()))
     mic.debug_levels = args.levels
@@ -2099,6 +2151,35 @@ def main():
             print(f"[voice] volume set to {v:.2f} from the control panel", flush=True)
         watch.on_volume = set_volume
 
+        def reload_devices():
+            """The control panel changed the camera, mic or speaker in jim.toml: switch to them now, no restart."""
+            p = build_parser()
+            known = {x.dest for x in p._actions}
+            p.set_defaults(**{k: v for k, v in load_config().items() if not isinstance(v, dict) and k in known})
+            new = p.parse_args([])               # jim.toml as it is now (the panel only adds the viewer port)
+            changed = []
+            url, crop = camera_choice(new)
+            if url != camera.url or crop != camera.crop:
+                camera.set_url(url, crop)
+                if url and VISION_RULES not in brain.system:
+                    brain.system += VISION_RULES
+                if not url:
+                    brain.system = brain.system.replace(VISION_RULES, "")
+                changed.append("camera: " + ("USB webcam " + url if url and url.startswith("/dev/") else "security camera" if url else "none"))
+            if new.mic != args.mic or (new.mic == "wled" and new.wled_gain != args.wled_gain):
+                mic.set_source(mic_source(new))
+                changed.append("mic: " + new.mic)
+            mic.min_rms = new.min_rms if new.min_rms is not None else (500 if new.mic == "wled" else 300)
+            mic.fixed, mic.vad_ratio, mic.silence_s = new.level_mode == "fixed", new.vad_ratio, new.silence
+            if new.speaker != voice.device:
+                voice.device = new.speaker
+                changed.append("speaker: " + new.speaker)
+            voice.volume = max(0.05, min(1.5, new.volume))
+            args.mic, args.wled_gain, args.speaker = new.mic, new.wled_gain, new.speaker
+            print("[jim] switched " + (", ".join(changed) if changed else "nothing (settings refreshed)") + " from the control panel", flush=True)
+            return changed
+        watch.on_reload = reload_devices
+
         def speaker_level():
             fresh = time.time() - getattr(voice, "out_t", 0) < 0.4      # nothing written lately: silent
             return {"level": round(getattr(voice, "out_level", 0)) if fresh else 0, "playing": fresh,
@@ -2108,7 +2189,7 @@ def main():
                                        "muted": mic.muted.is_set()},
                                "speaker": speaker_level(),
                                "snooze_left": max(0, round(snooze_until[0] - time.time())), "recording": bool(rec),
-                               "metrics": {k: list(v) for k, v in metrics.items()}, "camera": camera.stats() if camera else None}
+                               "metrics": {k: list(v) for k, v in metrics.items()}, "camera": camera.stats() if camera.url else None}
     if sys.stdin.isatty():
         threading.Thread(target=keyboard, daemon=True).start()
         print(f"(Press Enter any time to make Jim sleep for {args.snooze:g} s.)")
