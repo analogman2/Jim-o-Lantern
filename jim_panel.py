@@ -30,7 +30,7 @@ PYTHON = HERE / ".venv" / "bin" / "python"
 GROUPS = {
     "camera": [("Picture sent to the AI", ["camera_crop", "camera_width"])],
     "mic": [],                                   # saved mics (MICS_FILE) set mic, min_rms, vad_ratio, silence, wled_gain
-    "voice": [("Voice", ["speaker", "voice_design", "gentle_voice_design", "pitch", "intonation", "echo", "grit", "lip_offset"]),
+    "voice": [("Voice", ["voice_design", "gentle_voice_design", "pitch", "intonation", "echo", "grit", "lip_offset"]),
               ("Engine", ["tts", "speech_url"])],
     "responses": [("Personality", ["house", "temperature", "max_words"]),
                   ("Brain", ["brain", "ollama_model", "ollama_url", "keep_loaded"]),
@@ -48,6 +48,8 @@ SLIDERS = {"pitch": (0.7, 0.06, 1.0), "intonation": (0.85, 0.15, 1.0), "echo": (
 CONFIG_DIR = Path.home() / ".config" / "jim"
 CAMERAS_FILE = CONFIG_DIR / "cameras.json"      # saved cameras, with passwords: only you can read it
 MICS_FILE = CONFIG_DIR / "mics.json"
+SPEAKERS_FILE = CONFIG_DIR / "speakers.json"
+VOLUME = (0.25, 0.125)                           # the volume slider: 1-10 -> 0.25 .. 1.375; 7 = 1.0 (as made)
 LONG = {"voice_design", "gentle_voice_design", "house"}
 PICK = {"mic": "mics", "speaker": "speakers", "usb_camera": "cameras", "ollama_model": "models"}
 
@@ -383,6 +385,77 @@ def use_mic(mid):
     if not m:
         raise ValueError("no such mic")
     write_settings({k: m[k] for k in MIC_KEYS if m.get(k) is not None})
+
+
+def speakers():
+    """Saved speakers (a playback device plus Jim's volume on it). The first time, the one Jim uses now is added."""
+    sp = read_private(SPEAKERS_FILE, None)
+    if sp is None:
+        cfg = load_config()
+        dev = cfg.get("speaker", "default")
+        desc = dict(devices()["speakers"]).get(dev, dev)
+        sp = [{"id": "current", "name": (desc.split(",")[0] or "Speaker")[:40], "speaker": dev, "volume": float(cfg.get("volume", 1.0))}]
+        write_private(SPEAKERS_FILE, sp)
+    return sp
+
+
+def active_speaker(sp=None):
+    dev = load_config().get("speaker", "default")
+    return next((x["id"] for x in (sp if sp is not None else speakers()) if x["speaker"] == dev), None)
+
+
+def save_speaker_profile(b):
+    sp = speakers()
+    old = next((x for x in sp if x["id"] == b.get("id")), None)
+    dev = str(b.get("speaker") or "")
+    if dev != "default" and not re.fullmatch(r"[\w:=,.-]+", dev):
+        raise ValueError("pick a speaker")
+    x = {"name": str(b.get("name") or "").strip()[:40] or "Speaker", "speaker": dev, "volume": max(0.05, min(1.5, float(b.get("volume") or 1.0)))}
+    was_active = bool(old) and active_speaker(sp) == old["id"]
+    if old:
+        old.clear(); old.update(x, id=b["id"]); x = old
+    else:
+        x["id"] = new_id(x["name"], {y["id"] for y in sp}); sp.append(x)
+    write_private(SPEAKERS_FILE, sp)
+    if was_active or b.get("use"):
+        use_speaker(x["id"])
+    return x
+
+
+def use_speaker(sid):
+    x = next((x for x in speakers() if x["id"] == sid), None)
+    if not x:
+        raise ValueError("no such speaker")
+    write_settings({"speaker": x["speaker"], "volume": x["volume"]})
+    jim_post("/volume", {"volume": x["volume"]})                    # the device itself changes at Jim's next start
+
+
+def jim_post(path, body):
+    """Tell a running Jim something through his viewer; False if he isn't running."""
+    if not jim.running():
+        return False
+    try:
+        urllib.request.urlopen(urllib.request.Request(WATCH + path, json.dumps(body).encode(),
+                                                      {"Content-Type": "application/json", "X-Jim-Panel": "1"}), timeout=3).read()
+        return True
+    except Exception:
+        return False
+
+
+def speaker_test(x):
+    """Jim says a test line on this speaker, at its volume (it really plays in the house)."""
+    voice = load_config().get("voice_design") or P.JACK_VOICE
+    wav = preview_voice({"text": "Testing, testing. Can you hear me out there?", "voice_design": voice,
+                         "pitch": load_config().get("pitch") or 1.0})
+    import io, wave
+    with wave.open(io.BytesIO(wav)) as w:
+        rate, pcm = w.getframerate(), np.frombuffer(w.readframes(w.getnframes()), "<i2").astype(np.float32) / 32768
+    pcm = (np.clip(pcm * x["volume"], -1, 1) * 32767).astype("<i2").tobytes()
+    r = subprocess.run(["aplay", "-q", "-D", x["speaker"], "-f", "S16_LE", "-c", "1", "-r", str(rate), "-t", "raw"],
+                       input=pcm, capture_output=True, timeout=30)
+    if r.returncode:
+        msg = r.stderr.decode(errors="replace").strip()
+        raise ValueError("the speaker is busy (Jim is talking?)" if "busy" in msg.lower() else msg[-200:] or "couldn't play")
 
 
 # ---------------------------------------------------------------- devices
@@ -753,6 +826,9 @@ class Panel(BaseHTTPRequestHandler):
         if path == "/api/cameras":
             cams = cameras()
             return self.send(200, {"cameras": [public_camera(c) for c in cams], "active": active_camera(cams), "devices": devices()["cameras"]})
+        if path == "/api/speakers":
+            sp = speakers()
+            return self.send(200, {"speakers": sp, "active": active_speaker(sp), "devices": devices()["speakers"], "volume_slider": VOLUME})
         if path == "/api/mics":
             ms = mics()
             return self.send(200, {"mics": ms, "active": active_mic(ms), "devices": devices()["mics"]})
@@ -799,14 +875,7 @@ class Panel(BaseHTTPRequestHandler):
                         m["min_rms"] = v
                 write_private(MICS_FILE, ms)
                 write_settings({"min_rms": v})
-                live = False
-                if jim.running():
-                    try:
-                        urllib.request.urlopen(urllib.request.Request(WATCH + "/min_rms", json.dumps({"min_rms": v}).encode(),
-                                                                      {"Content-Type": "application/json", "X-Jim-Panel": "1"}), timeout=3).read()
-                        live = True
-                    except Exception:
-                        pass
+                live = jim_post("/min_rms", {"min_rms": v})
                 return self.send(200, {"ok": True, "min_rms": v, "live": live})
             if path == "/api/snooze":
                 return self.proxy("/snooze", "POST", json.dumps({"seconds": b.get("seconds", 10)}).encode())
@@ -833,6 +902,26 @@ class Panel(BaseHTTPRequestHandler):
                 use_camera(m.group(1)); return self.send(200, {"ok": True, "restart": jim.running()})
             if path == "/api/mics":
                 return self.send(200, {"mic": save_mic_profile(b), "restart": jim.running()})
+            if path == "/api/speakers":
+                x = save_speaker_profile(b)
+                return self.send(200, {"speaker": x, "restart": jim.running() and b.get("use")})
+            m = re.fullmatch(r"/api/speakers/([\w-]+)/(use|test)", path)
+            if m:
+                if m.group(2) == "use":
+                    use_speaker(m.group(1)); return self.send(200, {"ok": True, "restart": jim.running()})
+                x = next((x for x in speakers() if x["id"] == m.group(1)), None)
+                if not x:
+                    raise ValueError("no such speaker")
+                speaker_test(x); return self.send(200, {"ok": True})
+            if path == "/api/volume":
+                v = max(0.05, min(1.5, float(b["volume"])))
+                sp, sid = speakers(), active_speaker()
+                for x in sp:
+                    if x["id"] == sid:
+                        x["volume"] = v
+                write_private(SPEAKERS_FILE, sp)
+                write_settings({"volume": v})
+                return self.send(200, {"ok": True, "volume": v, "live": jim_post("/volume", {"volume": v})})
             m = re.fullmatch(r"/api/mics/([\w-]+)/use", path)
             if m:
                 use_mic(m.group(1)); return self.send(200, {"ok": True, "restart": jim.running()})
@@ -854,9 +943,10 @@ class Panel(BaseHTTPRequestHandler):
         if not self.local() or self.headers.get("X-Jim-Panel") != "1":
             return self.send(403, {"error": "forbidden"})
         path = urllib.parse.urlsplit(self.path).path
-        m = re.fullmatch(r"/api/(cameras|mics)/([\w-]+)", path)
+        m = re.fullmatch(r"/api/(cameras|mics|speakers)/([\w-]+)", path)
         if m:
-            f, items = (CAMERAS_FILE, cameras()) if m.group(1) == "cameras" else (MICS_FILE, mics())
+            f, items = {"cameras": (CAMERAS_FILE, cameras), "mics": (MICS_FILE, mics), "speakers": (SPEAKERS_FILE, speakers)}[m.group(1)]
+            items = items()
             write_private(f, [x for x in items if x["id"] != m.group(2)])
             return self.send(200, {"ok": True})
         if path == "/api/recordings":

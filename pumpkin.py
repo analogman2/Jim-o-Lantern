@@ -311,6 +311,7 @@ class Mic(threading.Thread):
         self.debug_levels = False
         self.level = self.thresh = 0.0  # latest loudness and the current trigger level (for the panel)
         self.level_t = 0.0               # when the last sound frame arrived (a lost mic stops updating it)
+        self.speech_end = 0.0            # when the latest utterance's last loud frame was heard (end-to-end timing)
 
     def mute(self):
         self.muted.set()
@@ -382,6 +383,7 @@ class Mic(threading.Thread):
                     if dur > 15:  # never went quiet: background got louder, so re-learn it
                         floor = float(np.percentile([np.sqrt(np.mean(f ** 2)) for f in speech], 20))
                     if dur > 0.5:
+                        self.speech_end = last_loud
                         audio = np.concatenate(speech)
                         audio = audio / max(np.max(np.abs(audio)), 1.0) * 0.9  # normalize
                         self.utterances.put(self.to_16k(audio))
@@ -554,6 +556,7 @@ setInterval(poll,1000);poll();
         self.extra = lambda: {}                      # set later: mic levels
         self.on_snooze = None                        # set later: POST /snooze {"seconds"}
         self.on_min_rms = None                       # set later: POST /min_rms {"min_rms"}: Jim's trigger level, live
+        self.on_volume = None                        # set later: POST /volume {"volume"}: Jim's loudness, live
         self.port = port
         self.lock = threading.Lock()
         threading.Thread(target=self.serve, args=(port,), daemon=True).start()
@@ -590,13 +593,15 @@ setInterval(poll,1000);poll();
 
             def do_POST(self):
                 # the control panel's buttons; the custom header keeps other websites' forms out
-                handler = {"/snooze": watch.on_snooze, "/min_rms": watch.on_min_rms}.get(self.path)
+                handler = {"/snooze": watch.on_snooze, "/min_rms": watch.on_min_rms, "/volume": watch.on_volume}.get(self.path)
                 if not self.local() or self.headers.get("X-Jim-Panel") != "1" or not handler:
                     self.send_response(403); self.end_headers(); return
                 n = int(self.headers.get("Content-Length") or 0)
                 b = json.loads(self.rfile.read(n) or b"{}") if n else {}
                 if self.path == "/snooze":
                     handler(float(b.get("seconds") or 10))
+                elif self.path == "/volume":
+                    handler(max(0.05, min(1.5, float(b["volume"]))))
                 else:
                     handler(max(20.0, min(30000.0, float(b["min_rms"]))))
                 self.send(b'{"ok": true}', "application/json")
@@ -613,7 +618,8 @@ setInterval(poll,1000);poll();
                         self.send_response(404); self.end_headers(); return
                     return self.send(frame, "image/jpeg")
                 if path == "/mic.json":                  # polled several times a second by the panel's meter
-                    return self.send(json.dumps(watch.extra().get("mic") or {}).encode(), "application/json")
+                    x = watch.extra()
+                    return self.send(json.dumps({**(x.get("mic") or {}), "speaker": x.get("speaker")}).encode(), "application/json")
                 if path == "/events.json":
                     with watch.lock:
                         d = {"state": watch.state(), "events": list(watch.events), "verdict": watch.verdict,
@@ -1388,6 +1394,9 @@ class Voice:
                         peak = max(rms, peak * 0.999)
                         level = min(1.0, max(0.0, (rms / peak - 0.15) / 0.7))
                         self.face.push_mouth(play_end + self.lip_offset, level)
+                    piece = np.clip(piece * getattr(self, "volume", 1.0), -1, 1)
+                    self.out_level = max(float(np.sqrt(np.mean(piece ** 2))) * 32768, getattr(self, "out_level", 0) * 0.85)
+                    self.out_t = time.time()                           # for the control panel's speaker meter
                     aplay.stdin.write((piece * 32767).astype(np.int16).tobytes())
                     aplay.stdin.flush()
                     play_end += len(piece) / self.play_rate
@@ -1573,6 +1582,8 @@ def build_parser():
     p.add_argument("--wled-gain", type=int, default=16, choices=range(1, 256), metavar="1-255",
                    help="amplification applied on the WLED before streaming its mic")
     p.add_argument("--speaker", default="default", help="ALSA playback device (aplay -L)")
+    p.add_argument("--volume", type=float, default=1.0,
+                   help="loudness of Jim's voice: 1 = as made, 0.5 = half, up to 1.5 (louder clips)")
     p.add_argument("--tts", default="qwen", choices=["qwen", "chatterbox", "kokoro"],
                    help="qwen = Qwen3-TTS voice design via the speech service (default, most "
                         "natural); chatterbox = copies --voice-ref; kokoro = lightest and fastest")
@@ -1754,6 +1765,7 @@ def main():
     brain.max_words = args.max_words
     brain.temperature = args.temperature
     voice.gentle_instruct = args.gentle_voice_design
+    voice.volume = max(0.05, min(1.5, args.volume))
     if chatter and args.tts_model == "turbo":
         brain.system += ("\n\nYour voice can perform sound effects: you may put one of these "
                          "tags inline, at most once per reply: " +
@@ -1779,7 +1791,8 @@ def main():
     import collections
     # seconds, newest last: hear = speech to text; think = first sentence from the model; first_word = the kid
     # stopped talking -> Jim's voice starts; vision = the camera roast at wake-up
-    metrics = {k: collections.deque(maxlen=30) for k in ("hear", "think", "first_word", "vision")}
+    # e2e = the kid stops talking -> Jim's first sound = wait (the pause that ends a sentence) + hear + think + speak
+    metrics = {k: collections.deque(maxlen=30) for k in ("hear", "think", "first_word", "vision", "e2e", "wait", "speak")}
 
     def metric(kind, seconds):
         metrics[kind].append(round(seconds, 2))
@@ -1808,19 +1821,20 @@ def main():
         """The current camera frame, if there is a fresh one."""
         return camera.latest() if camera else None
 
-    def respond(text, heard=None, t_heard=None):
+    def respond(text, heard=None, t_heard=None, t_end=None):
         frame = see()
         if watch and frame:
             watch.judge(frame, None)
         clips = capture()
         if voice.streaming:
             face.state = "thinking"
-            t0, said, took = time.time(), [], []
+            t0, said, took, first_at = time.time(), [], [], []
 
             def sentences():
                 for s in brain.reply_sentences(text, frame):
                     if not said:
                         metric("think", time.time() - t0)
+                        first_at.append(time.time())
                     voice.gentle = brain.gentle  # softer voice for a scared kid
                     print(f"  🎃 {s}")
                     said.append(s.strip())
@@ -1830,6 +1844,10 @@ def main():
                 face.state = "talking"
                 took.append(time.time() - t0)
                 metric("first_word", time.time() - (t_heard or t0))
+                if first_at:
+                    metric("speak", time.time() - first_at[0])
+                if t_end:
+                    metric("e2e", time.time() - t_end)
                 print(f"     (started talking after {took[0]:.2f}s)")
 
             voice.say_stream(sentences(), on_start=started)
@@ -1848,6 +1866,8 @@ def main():
         print(f"  🎃 {reply}   ({time.time() - t0:.2f}s)")
         face.state = "talking"
         metric("first_word", time.time() - (t_heard or t0))
+        if t_end:
+            metric("e2e", time.time() - t_end)
         voice.play(audio)
         if rec:
             rec.add("turn", text, frame, heard, played(clips), voice.play_rate, reply=reply,
@@ -2021,8 +2041,19 @@ def main():
             mic.min_rms = v
             print(f"[mic] reaction level set to {v:.0f} from the control panel", flush=True)
         watch.on_min_rms = set_min_rms
+
+        def set_volume(v):
+            voice.volume = v
+            print(f"[voice] volume set to {v:.2f} from the control panel", flush=True)
+        watch.on_volume = set_volume
+
+        def speaker_level():
+            fresh = time.time() - getattr(voice, "out_t", 0) < 0.4      # nothing written lately: silent
+            return {"level": round(getattr(voice, "out_level", 0)) if fresh else 0, "playing": fresh,
+                    "volume": round(getattr(voice, "volume", 1.0), 3), "device": args.speaker}
         watch.extra = lambda: {"mic": {"level": round(mic.level), "thresh": round(mic.thresh), "min_rms": round(mic.min_rms),
                                        "age_s": round(time.time() - mic.level_t, 1) if mic.level_t else None},
+                               "speaker": speaker_level(),
                                "snooze_left": max(0, round(snooze_until[0] - time.time())), "recording": bool(rec),
                                "metrics": {k: list(v) for k, v in metrics.items()}, "camera": camera.stats() if camera else None}
     if sys.stdin.isatty():
@@ -2091,7 +2122,9 @@ def main():
                 go_dark()
             continue
         face.state = "thinking"
-        t0 = time.time()
+        t0, t_end = time.time(), mic.speech_end
+        if t_end:
+            metric("wait", t0 - t_end)
         text = ears.transcribe(audio)
         if not text:
             face.state = "idle"
@@ -2099,7 +2132,7 @@ def main():
         print(f"kid> {text}   (stt {time.time() - t0:.2f}s)")
         metric("hear", time.time() - t0)
         mic.mute()
-        respond(text, audio, t0)
+        respond(text, audio, t0, t_end)
         face.state = "idle"
         time.sleep(0.3)  # let the speaker's echo die out before listening again
         mic.unmute()

@@ -25,7 +25,7 @@ input[type=range]{width:100%;accent-color:var(--orange);margin:6px 0 0}
 .camcard .thumb img{width:100%;height:100%;object-fit:cover;display:block}.camcard .thumb img:not([src]){visibility:hidden}
 .camcard .thumb .snapnote{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;text-align:center;padding:8px}
 .badge{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:3px;font-size:11px;font-weight:600;background:rgba(255,152,48,.15);color:var(--orange)}
-.sub{font-size:12px;color:var(--mute)}.bars{display:flex;align-items:flex-end;gap:1px;height:50px;margin-top:8px}.bars i{flex:1;background:var(--ok);min-height:1px}button.b.sm{padding:4px 10px;font-size:12px}
+.sub{font-size:12px;color:var(--mute)}h2.sect{font-size:15px;font-weight:600;margin:6px 0 10px;color:var(--orange)}.bars{display:flex;align-items:flex-end;gap:1px;height:50px;margin-top:8px}.bars i{flex:1;background:var(--ok);min-height:1px}button.b.sm{padding:4px 10px;font-size:12px}
 .thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
 .vcard{background:var(--card);border:1px solid var(--line);border-radius:4px;overflow:hidden;cursor:pointer}.vcard:hover{border-color:var(--orange)}
 .vcard img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block;background:#0b0c0e}.vcard .vb{padding:8px 10px}
@@ -90,6 +90,8 @@ svg.dsp{position:absolute;left:0;right:0;bottom:0;width:100%;height:46%;opacity:
 .chart{flex:1;min-height:80px;position:relative;display:flex;flex-direction:column}.chart svg{flex:1;min-height:0}.chart svg{display:block;width:100%}
 .chart text{fill:var(--g-mute);font-size:10px;font-family:inherit}.chart .grid line{stroke:#2c3235;stroke-width:1}
 .legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--g-mute);margin-top:4px}.legend i{display:inline-block;width:10px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.pipe{display:flex;height:30px;border-radius:3px;overflow:hidden;background:#22252b;margin:8px 0 4px}
+.pipe i{display:flex;align-items:center;justify-content:center;font-style:normal;font-size:11px;font-weight:600;color:#111217;white-space:nowrap;overflow:hidden;min-width:0}
 table.dtab{width:100%;border-collapse:collapse;font-size:12px}table.dtab th{color:var(--g-blue);font-weight:500;text-align:left;padding:5px 6px;border-bottom:1px solid var(--g-line)}
 table.dtab td{padding:6px;border-bottom:1px solid #22252b;font-variant-numeric:tabular-nums}
 .up,.down{font-weight:600;border-radius:3px;padding:1px 6px;font-size:11px}.up{background:rgba(115,191,105,.18);color:var(--g-green)}.down{background:rgba(242,73,92,.18);color:var(--g-red)}
@@ -112,13 +114,21 @@ table.dtab td{padding:6px;border-bottom:1px solid #22252b;font-variant-numeric:t
    <div class="dp" data-id="vision" data-stat="vision" data-w="2" data-h="130"><div class="dt">Camera roast</div><div class="dv">—</div><div class="ds">at wake-up · median</div><svg class="dsp"></svg></div>
    <div class="dp" data-id="fps" data-stat="fps" data-w="2" data-h="130"><div class="dt">Camera stream</div><div class="dv">—</div><div class="ds">frames / s</div><svg class="dsp"></svg></div>
    <div class="dp" data-id="wifi" data-stat="wifi" data-w="2" data-h="130"><div class="dt">LED Wi-Fi</div><div class="dv">—</div><div class="ds">signal</div><div class="gauge"><i></i></div></div>
+   <div class="dp" data-id="e2e" data-stat="e2e" data-w="3" data-h="130"><div class="dt">End to end</div><div class="dv">—</div><div class="ds">kid stops talking → Jim's first sound · median</div><svg class="dsp"></svg></div>
+   <div class="dp" data-id="pipe" data-w="9" data-h="130"><div class="dt">Where the time goes <span class="sub">· median of the last replies</span></div>
+    <div class="pipe" id="pipe"></div><div class="legend" id="pipeLegend"></div></div>
    <div class="dp" data-id="state" data-w="12" data-h="80"><div class="dt">State</div><div class="dv" id="stateText" style="font-size:20px">—</div></div>
    <div class="dp" data-id="hearing" data-w="2" data-h="360"><div class="dt">Mic level <select class="dsel" id="liveMicSel" title="the mic Jim listens with"></select></div>
     <div class="vmeter"><div class="vscale"><span style="bottom:100%">0</span><span style="bottom:75%">-20</span><span style="bottom:50%">-40</span><span style="bottom:25%">-60</span><span style="bottom:0">-80</span></div>
      <div class="vbar" id="vbar" title="drag the white line to change when Jim reacts"><i id="lvl"></i><b id="thr"><span id="thrTag"></span></b></div>
      <div class="vread"><div class="dv" id="lvlDb">—</div><div class="ds">dBFS</div><div class="ds" id="lvlText" style="margin-top:8px"></div></div></div></div>
-   <div class="dp" data-id="live" data-w="5" data-h="360"><div class="dt">Live camera <select class="dsel" id="liveCamSel" title="the camera Jim looks through"></select></div><div class="media"><img class="view" id="live" alt=""><div class="ds" id="liveNote">Jim isn't running.</div></div></div>
-   <div class="dp" data-id="judged" data-w="5" data-h="360"><div class="dt">Last frame Jim judged</div><div class="media"><img class="view" id="judged" alt=""><div class="verdict" id="verdict"></div></div></div>
+   <div class="dp" data-id="speaker" data-w="2" data-h="360"><div class="dt">Speaker <select class="dsel" id="liveSpkSel" title="the speaker Jim talks through"></select></div>
+    <div class="vmeter"><div class="vscale"><span style="bottom:100%">0</span><span style="bottom:75%">-20</span><span style="bottom:50%">-40</span><span style="bottom:25%">-60</span><span style="bottom:0">-80</span></div>
+     <div class="vbar" style="cursor:default"><i id="spkLvl"></i></div>
+     <div class="vread"><div class="dv" id="spkDb">—</div><div class="ds">dBFS</div><div class="ds" id="spkText" style="margin-top:8px"></div></div></div>
+    <div class="sl" title="Jim's volume, live"><span class="ds">vol</span><input type="range" min="1" max="10" step="1" id="spkVol"><span class="ds" id="spkVolV"></span></div></div>
+   <div class="dp" data-id="live" data-w="4" data-h="360"><div class="dt">Live camera <select class="dsel" id="liveCamSel" title="the camera Jim looks through"></select></div><div class="media"><img class="view" id="live" alt=""><div class="ds" id="liveNote">Jim isn't running.</div></div></div>
+   <div class="dp" data-id="judged" data-w="4" data-h="360"><div class="dt">Last frame Jim judged</div><div class="media"><img class="view" id="judged" alt=""><div class="verdict" id="verdict"></div></div></div>
    <div class="dp" data-id="resp" data-w="6" data-h="270"><div class="dt">Response times <span class="sub">· per reply, seconds</span></div><div class="chart" id="chResp"></div></div>
    <div class="dp" data-id="net" data-w="6" data-h="270"><div class="dt">Network latency <span class="sub">· ms, last 6 min</span></div><div class="chart" id="chNet"></div></div>
    <div class="dp" data-id="mic" data-w="6" data-h="270"><div class="dt">Mic level history <span class="sub">· dBFS, last 2 min · dashed = Jim reacts above</span></div><div class="chart" id="chMic"></div></div>
@@ -149,6 +159,7 @@ table.dtab td{padding:6px;border-bottom:1px solid #22252b;font-variant-numeric:t
  <div id="fields-camera"></div>
 </section>
 <section class="tab" id="tab-mic">
+ <h2 class="sect">Microphones</h2>
  <div class="row" style="margin-bottom:12px"><button class="b go" id="micAdd">＋ Add mic</button>
   <span class="sub">The mic marked <span class="badge" style="margin:0">In use</span> is the one Jim listens with (after a restart), with its sensitivity.</span></div>
  <div class="cams" id="mics"><div class="muted">Loading…</div></div>
@@ -165,6 +176,16 @@ table.dtab td{padding:6px;border-bottom:1px solid #22252b;font-variant-numeric:t
    <div id="micResult" style="margin-top:8px"></div><div class="bars" id="micBars"></div></div>
    <div class="card"><h2>Live (while Jim runs)</h2><div class="meter"><i id="lvl2"></i><b id="thr2"></b></div><div class="muted" id="lvlText2" style="margin-top:6px">—</div></div></div>
  </div>
+ <h2 class="sect">Speakers</h2>
+ <div class="row" style="margin-bottom:12px"><button class="b go" id="spkAdd">＋ Add speaker</button>
+  <span class="sub">The speaker marked <span class="badge" style="margin:0">In use</span> is the one Jim talks through. Test plays a line on it for real.</span></div>
+ <div class="cams" id="spks"><div class="muted">Loading…</div></div>
+ <div class="grid"><div class="card" id="spkForm" style="display:none"><h2 id="sfTitle">Add a speaker</h2>
+   <div class="field"><label>Name</label><input type="text" id="sfName" placeholder="Porch speaker"></div>
+   <div class="field"><label>Device</label><select id="sfDev"></select></div>
+   <div class="field"><label>Volume</label><div class="sl"><input type="range" min="1" max="10" step="1" id="sfVol"><span class="val" id="sfVolV"></span></div>
+    <div class="help">7 = Jim's voice as made; above 7 is louder and may clip</div></div>
+   <div class="row"><button class="b go" id="sfSave">Save</button><button class="b" id="sfSaveUse">Save and use</button><button class="b" id="sfCancel">Cancel</button></div></div></div>
 </section>
 <section class="tab" id="tab-voice">
  <div class="grid">
@@ -201,13 +222,13 @@ function toast(text, restart) {
 $("toastBtn").onclick = () => control("restart");
 
 // ---- tabs
-const TABS = [["live", "Live"], ["camera", "Camera"], ["mic", "Mic"], ["voice", "Voice"], ["responses", "Replies"], ["recordings", "Recordings"]];
+const TABS = [["live", "Live"], ["camera", "Camera"], ["mic", "Audio"], ["voice", "Voice"], ["responses", "Replies"], ["recordings", "Recordings"]];
 function show(name) {
   for (const [k] of TABS) { $("tab-" + k).classList.toggle("on", k === name); document.querySelector(`nav [data-t=${k}]`).classList.toggle("on", k === name) }
   try { localStorage.setItem("jimTab", name) } catch (e) {}
   if (name === "recordings") loadVisits();
   if (name === "camera") loadCams(true);
-  if (name === "mic") loadMics();
+  if (name === "mic") { loadMics(); loadSpeakers() }
   updateLive();
   if (name !== "camera" && $("camTest").getAttribute("src")) camStop();
 }
@@ -323,6 +344,13 @@ function vmeter(mic) {
     + (floorHigher && thrDrag == null ? `<br><span title="Jim also needs speech to be several times louder than the room's background noise">set to ${Math.round(dbfs(mic.min_rms))} dB; the background noise raises it now</span>` : "");
 }
 let lastMic = null;
+function smeter(sp) {
+  const db = dbfs(sp.level);
+  $("spkLvl").style.height = (100 - (sp.playing ? pctDb(db) : 0)) + "%";
+  $("spkDb").textContent = sp.playing && db > -89 ? Math.round(db) + " dB" : "quiet"; $("spkDb").style.color = sp.playing ? "#73bf69" : "#8e8e9a";
+  $("spkText").textContent = sp.playing ? "Jim is talking" : "";
+  if (document.activeElement !== $("spkVol")) { const pos = volPos(sp.volume); $("spkVol").value = pos; $("spkVolV").textContent = `${pos}/10` }
+}
 // drag the white line: Jim's minimum loudness (min_rms), live in Jim and kept in jim.toml and the mic in use
 $("vbar").addEventListener("pointerdown", e => {
   if (!status.running) return toast("Start Jim to change his reaction level here (or use the Mic tab).");
@@ -343,7 +371,7 @@ $("vbar").addEventListener("pointerdown", e => {
 });
 async function pollMic() {
   if (!status.running || !$("tab-live").classList.contains("on")) return;
-  try { const m = await (await api("/jim/mic.json")).json(); vmeter(m) } catch (e) {}
+  try { const m = await (await api("/jim/mic.json")).json(); vmeter(m); if (m.speaker) smeter(m.speaker) } catch (e) {}
 }
 setInterval(pollMic, 200);
 function meter(i, b, t, mic) {
@@ -397,7 +425,7 @@ const G = {green: "#73bf69", yellow: "#fade2a", red: "#f2495c", blue: "#5794f2",
 const fmtS = v => v == null ? "—" : v >= 1 ? v.toFixed(2) + " s" : Math.round(v * 1000) + " ms";
 const median = a => { const b = a.filter(v => v != null).sort((x, y) => x - y); return b.length ? (b.length % 2 ? b[(b.length - 1) / 2] : (b[b.length / 2 - 1] + b[b.length / 2]) / 2) : null };
 // thresholds: [green below, yellow below]; else red. "up" = bigger is better
-const STAT = {first_word: {t: [1.5, 3]}, think: {t: [1, 2.5]}, hear: {t: [0.5, 1.5]}, vision: {t: [2, 4]},
+const STAT = {e2e: {t: [2.5, 4]}, first_word: {t: [1.5, 3]}, think: {t: [1, 2.5]}, hear: {t: [0.5, 1.5]}, vision: {t: [2, 4]},
               fps: {t: [1, 0.5], up: true}, wifi: {t: [60, 35], up: true}};
 const color = (k, v) => { if (v == null) return G.mute; const [a, b] = STAT[k].t; return STAT[k].up ? (v >= a ? G.green : v >= b ? G.yellow : G.red) : (v < a ? G.green : v < b ? G.yellow : G.red) };
 function sparkArea(svg, vals, col) {
@@ -444,12 +472,18 @@ const live = {mic: [], thr: [], fps: []};      // 1-second samples kept in the p
 let lastJim = null, net = {};
 function paintDash() {
   const m = lastJim?.metrics || {}, cam = status.running ? lastJim?.camera : null;
-  for (const k of ["first_word", "think", "hear", "vision"]) { const a = m[k] || []; stat(k, median(a), fmtS(median(a)), a) }
+  for (const k of ["e2e", "first_word", "think", "hear", "vision"]) { const a = m[k] || []; stat(k, median(a), fmtS(median(a)), a) }
+  const parts = [["wait", "waiting for the kid to finish", "#8e8e9a"], ["hear", "hearing", G.blue], ["think", "thinking", G.yellow], ["speak", "voice", G.orange]]
+    .map(([k, name, color]) => ({k, name, color, v: median(m[k] || [])}));
+  const total = parts.reduce((a, p) => a + (p.v || 0), 0);
+  $("pipe").innerHTML = total ? parts.map(p => p.v ? `<i style="width:${p.v / total * 100}%;background:${p.color}" title="${p.name}: ${fmtS(p.v)}">${p.v / total > .08 ? fmtS(p.v) : ""}</i>` : "").join("") : "";
+  $("pipeLegend").innerHTML = total ? parts.map(p => `<span><i style="background:${p.color}"></i>${p.name} <b style="color:#ccccdc">${fmtS(p.v)}</b></span>`).join("")
+    + `<span>= <b style="color:#ccccdc">${fmtS(total)}</b></span>` : `<span>Talk to Jim to measure this.</span>`;
   stat("fps", cam ? cam.fps : null, cam ? cam.fps.toFixed(1) : "—", live.fps);
   const led = net["LED controller"]?.extra || {};
   stat("wifi", led.wifi ?? null, led.wifi != null ? led.wifi + "%" : "—");
   const n = Math.max(0, ...["hear", "think", "first_word"].map(k => (m[k] || []).length));
-  chart($("chResp"), [["first_word", "first word", G.green], ["think", "thinking", G.yellow], ["hear", "hearing", G.blue]]
+  chart($("chResp"), [["e2e", "end to end", G.red], ["first_word", "first word", G.green], ["think", "thinking", G.yellow], ["hear", "hearing", G.blue]]
     .map(([k, name, color]) => ({name, color, values: m[k] || []})), {unit: "s", xlabels: n ? [`reply ${Math.max(1, n - 29)}`, `reply ${n}`] : ["", ""]});
   const cols = [G.blue, G.orange, G.purple, G.green];
   chart($("chNet"), Object.entries(net).map(([name, c], i) => ({name, color: cols[i % 4], values: c.history})), {unit: "", xlabels: ["-6 min", "now"]});
@@ -511,7 +545,14 @@ function paintSave() { const d = dirty(); $("dSave").disabled = !d; $("dSave").t
 function fromList(list) {
   const known = new Map(PANELS.map(p => [p.id, p]));
   const out = (list || []).filter(l => known.has(l.id)).map(l => ({...known.get(l.id), ...l}));
-  for (const p of PANELS) if (!out.some(l => l.id === p.id)) out.push({...p, x: null, y: null});   // panels added since
+  // panels added since the layout was saved get rows of their own at the top; the saved ones move down below them
+  const fresh = PANELS.filter(p => !out.some(l => l.id === p.id)).map(p => ({...p, x: null, y: null}));
+  if (list?.length && fresh.length) {
+    let x = 0, y = 0, rowH = 0;
+    for (const p of fresh) { if (x + p.w > COLS) { x = 0; y += rowH; rowH = 0 } p.x = x; p.y = y; x += p.w; rowH = Math.max(rowH, p.h) }
+    for (const l of out) if (l.y != null) l.y += y + rowH;
+  }
+  out.push(...fresh);
   return out;
 }
 function applyLayout(fixed = null) {
@@ -538,7 +579,7 @@ for (const el of grid.children) {
   el.insertAdjacentHTML("beforeend", `<div class="rs" title="drag to resize"></div>`);
   head.querySelector(".x").onclick = () => { layout.find(l => l.id === el.dataset.id).hidden = true; applyLayout(); draft() };
   head.addEventListener("pointerdown", e => {                           // move
-    if (e.target.closest(".x, select") || e.button !== 0 || innerWidth <= 700) return;
+    if (e.target.closest(".x, select, input") || e.button !== 0 || innerWidth <= 700) return;
     e.preventDefault();
     const l = layout.find(x => x.id === el.dataset.id), start = cellAt(e.clientX, e.clientY), x0 = l.x, y0 = l.y;
     const orig = new Map(layout.map(o => [o, {x: o.x, y: o.y}]));      // others start from here on every move
@@ -597,19 +638,22 @@ async function loadCams(snaps) {
 function liveSelects() {
   $("liveCamSel").innerHTML = CAMS.cameras.map(c => `<option value="${esc(c.id)}" ${c.id === CAMS.active ? "selected" : ""}>${esc(c.name)}</option>`).join("")
     + (CAMS.active ? "" : `<option value="" selected>none in use</option>`);
+  $("liveSpkSel").innerHTML = SPK.speakers.map(x => `<option value="${esc(x.id)}" ${x.id === SPK.active ? "selected" : ""}>${esc(x.name)}</option>`).join("")
+    + (SPK.active ? "" : `<option value="" selected>custom (Audio tab)</option>`);
   $("liveMicSel").innerHTML = MICS.mics.map(m => `<option value="${esc(m.id)}" ${m.id === MICS.active ? "selected" : ""}>${esc(m.name)}</option>`).join("")
     + (MICS.active ? "" : `<option value="" selected>custom (Mic tab)</option>`);
 }
 async function useFromLive(kind, id) {
-  const list = kind === "cameras" ? CAMS.cameras : MICS.mics, item = list.find(x => x.id === id); if (!item) return;
+  const list = {cameras: CAMS.cameras, mics: MICS.mics, speakers: SPK.speakers}[kind], item = list.find(x => x.id === id); if (!item) return;
   try {
     const d = await (await post(`/api/${kind}/${encodeURIComponent(id)}/use`)).json();
-    await (kind === "cameras" ? loadCams(false) : loadMics());
-    toast(d.restart ? `${item.name} chosen. Restart Jim to ${kind === "cameras" ? "look through" : "listen with"} it.` : `${item.name} is in use.`, d.restart);
+    await ({cameras: () => loadCams(false), mics: loadMics, speakers: loadSpeakers}[kind])();
+    toast(d.restart ? `${item.name} chosen. Restart Jim to ${{cameras: "look through", mics: "listen with", speakers: "talk through"}[kind]} it.` : `${item.name} is in use.`, d.restart);
   } catch (e) { toast(e.message); liveSelects() }
 }
 $("liveCamSel").onchange = e => useFromLive("cameras", e.target.value);
 $("liveMicSel").onchange = e => useFromLive("mics", e.target.value);
+$("liveSpkSel").onchange = e => useFromLive("speakers", e.target.value);
 function paintCams(snaps) {
   liveSelects();
   $("cams").innerHTML = CAMS.cameras.map(c => `<div class="camcard ${c.id === CAMS.active ? "active" : ""}" data-cam="${esc(c.id)}">
@@ -725,6 +769,59 @@ $("mics").addEventListener("click", async e => {
   }
 });
 loadMics();
+
+// ---- saved speakers
+let SPK = {speakers: [], active: null, devices: [], volume_slider: [0.25, 0.125]}, editingSpk = null;
+const volReal = pos => +(SPK.volume_slider[0] + (pos - 1) * SPK.volume_slider[1]).toFixed(3);
+const volPos = v => Math.max(1, Math.min(10, Math.round((v - SPK.volume_slider[0]) / SPK.volume_slider[1]) + 1));
+async function loadSpeakers() { try { SPK = await (await api("/api/speakers")).json(); paintSpeakers() } catch (e) {} }
+function paintSpeakers() {
+  liveSelects();
+  const desc = d => (SPK.devices.find(([x]) => x === d) || [d, d])[1] || d;
+  $("spks").innerHTML = SPK.speakers.map(x => `<div class="camcard ${x.id === SPK.active ? "active" : ""}" data-spk="${esc(x.id)}">
+    <div><b>${esc(x.name)}</b>${x.id === SPK.active ? '<span class="badge">In use</span>' : ""}<div class="sub">${esc(desc(x.speaker))} · ${esc(x.speaker)}</div></div>
+    <div class="sub">Volume ${volPos(x.volume)}/10 (${x.volume}×)</div>
+    <div class="row">${x.id !== SPK.active ? '<button class="b sm go" data-act="use">Use</button>' : ""}<button class="b sm" data-act="test">▶ Test</button>
+     <button class="b sm" data-act="edit">Edit</button><button class="b sm" data-act="del">Delete</button></div></div>`).join("")
+    || `<div class="muted">No speakers saved yet: add one.</div>`;
+}
+function spkForm(x) {
+  editingSpk = x ? x.id : null; $("spkForm").style.display = "";
+  $("sfTitle").textContent = x ? "Edit " + x.name : "Add a speaker";
+  $("sfDev").innerHTML = SPK.devices.map(([d, n]) => `<option value="${esc(d)}">${esc(n || d)}${n ? " — " + esc(d) : ""}</option>`).join("");
+  $("sfName").value = x?.name || ""; if (x) $("sfDev").value = x.speaker;
+  $("sfVol").value = volPos(x?.volume ?? 1); $("sfVol").oninput();
+  $("spkForm").scrollIntoView({behavior: "smooth"});
+}
+$("sfVol").oninput = () => { $("sfVolV").innerHTML = `<b>${$("sfVol").value}</b>/10 · ${volReal(+$("sfVol").value)}×` };
+$("spkAdd").onclick = () => spkForm(null);
+$("sfCancel").onclick = () => { $("spkForm").style.display = "none" };
+async function saveSpk(use) {
+  try { const d = await (await post("/api/speakers", {id: editingSpk, name: $("sfName").value, speaker: $("sfDev").value, volume: volReal(+$("sfVol").value), use})).json();
+        $("spkForm").style.display = "none"; await loadSpeakers(); toast(d.restart ? "Saved. Restart Jim to talk through it." : "Speaker saved.", d.restart) }
+  catch (e) { toast("Not saved: " + e.message) }
+}
+$("sfSave").onclick = () => saveSpk(false); $("sfSaveUse").onclick = () => saveSpk(true);
+$("spks").addEventListener("click", async e => {
+  const act = e.target.dataset?.act, card = e.target.closest("[data-spk]"); if (!act || !card) return;
+  const x = SPK.speakers.find(y => y.id === card.dataset.spk);
+  if (act === "edit") spkForm(x);
+  if (act === "use") useFromLive("speakers", x.id);
+  if (act === "del" && confirm(`Delete ${x.name}?`)) { await api(`/api/speakers/${encodeURIComponent(x.id)}`, {method: "DELETE"}); loadSpeakers() }
+  if (act === "test") {
+    e.target.disabled = true; toast(`Playing a test line on ${x.name}…`);
+    try { await post(`/api/speakers/${encodeURIComponent(x.id)}/test`); toast(`Played on ${x.name}.`) } catch (err) { toast("⚠ " + err.message) }
+    e.target.disabled = false;
+  }
+});
+// the Live panel's volume slider: Jim's loudness, live, kept for the speaker in use
+$("spkVol").oninput = () => { $("spkVolV").textContent = `${$("spkVol").value}/10` };
+$("spkVol").onchange = async () => {
+  const v = volReal(+$("spkVol").value);
+  try { const d = await (await post("/api/volume", {volume: v})).json(); toast(`Volume ${$("spkVol").value}/10 (${d.volume}×)` + (d.live ? "." : ": saved for Jim's next start.")); loadSpeakers() }
+  catch (e) { toast("Not changed: " + e.message) }
+};
+loadSpeakers();
 
 // ---- voice preview
 async function preview(gentle) {
