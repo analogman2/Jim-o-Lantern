@@ -437,7 +437,7 @@ class Camera(threading.Thread):
             x, y, w, h = self.crop
             vf = f"crop=iw*{w}:ih*{h}:iw*{x}:ih*{y}," + vf
         if self.url.startswith("/dev/"):             # a USB webcam
-            src = ["-f", "v4l2", "-input_format", "mjpeg", "-video_size", "1280x720", "-i", self.url]
+            src = ["-f", "v4l2", "-input_format", "mjpeg", "-video_size", "848x480", "-i", self.url]
         else:                                        # the security camera (RTSP)
             src = ["-rtsp_transport", "tcp", "-i", self.url]
         cmd = ["ffmpeg", "-loglevel", "error", *src,
@@ -553,6 +553,7 @@ setInterval(poll,1000);poll();
         self.judged, self.judged_at, self.verdict = None, 0.0, None
         self.extra = lambda: {}                      # set later: mic levels
         self.on_snooze = None                        # set later: POST /snooze {"seconds"}
+        self.on_min_rms = None                       # set later: POST /min_rms {"min_rms"}: Jim's trigger level, live
         self.port = port
         self.lock = threading.Lock()
         threading.Thread(target=self.serve, args=(port,), daemon=True).start()
@@ -589,11 +590,15 @@ setInterval(poll,1000);poll();
 
             def do_POST(self):
                 # the control panel's buttons; the custom header keeps other websites' forms out
-                if not self.local() or self.headers.get("X-Jim-Panel") != "1" or self.path != "/snooze" or not watch.on_snooze:
+                handler = {"/snooze": watch.on_snooze, "/min_rms": watch.on_min_rms}.get(self.path)
+                if not self.local() or self.headers.get("X-Jim-Panel") != "1" or not handler:
                     self.send_response(403); self.end_headers(); return
                 n = int(self.headers.get("Content-Length") or 0)
-                seconds = float((json.loads(self.rfile.read(n) or b"{}") if n else {}).get("seconds") or 10)
-                watch.on_snooze(seconds)
+                b = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                if self.path == "/snooze":
+                    handler(float(b.get("seconds") or 10))
+                else:
+                    handler(max(20.0, min(30000.0, float(b["min_rms"]))))
                 self.send(b'{"ok": true}', "application/json")
 
             def do_GET(self):
@@ -2011,7 +2016,12 @@ def main():
 
     if watch:
         watch.on_snooze = snooze
-        watch.extra = lambda: {"mic": {"level": round(mic.level), "thresh": round(mic.thresh),
+
+        def set_min_rms(v):
+            mic.min_rms = v
+            print(f"[mic] reaction level set to {v:.0f} from the control panel", flush=True)
+        watch.on_min_rms = set_min_rms
+        watch.extra = lambda: {"mic": {"level": round(mic.level), "thresh": round(mic.thresh), "min_rms": round(mic.min_rms),
                                        "age_s": round(time.time() - mic.level_t, 1) if mic.level_t else None},
                                "snooze_left": max(0, round(snooze_until[0] - time.time())), "recording": bool(rec),
                                "metrics": {k: list(v) for k, v in metrics.items()}, "camera": camera.stats() if camera else None}

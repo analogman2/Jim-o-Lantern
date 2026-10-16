@@ -170,7 +170,7 @@ def grab_frame(source, usb, url=None):
         if mine and mine == ("usb", usb):                         # Jim has the webcam: use his newest frame
             with urllib.request.urlopen(WATCH + "/live.jpg", timeout=3) as r:
                 return r.read()
-        src = ["-f", "v4l2", "-input_format", "mjpeg", "-video_size", "1280x720", "-i", usb, "-vf", "select=gte(n\\,8),scale=768:-2"]
+        src = ["-f", "v4l2", "-input_format", "mjpeg", "-video_size", "848x480", "-i", usb, "-vf", "select=gte(n\\,8),scale=768:-2"]
         secret = None
     else:
         try:
@@ -202,7 +202,7 @@ def grab_frame(source, usb, url=None):
 def stream_cmd(source, usb, url=None):
     """ffmpeg reading a camera continuously as JPEGs (5 a second), or None for the security camera if none is saved."""
     if source == "usb":
-        src = ["-f", "v4l2", "-input_format", "mjpeg", "-video_size", "1280x720", "-i", usb]
+        src = ["-f", "v4l2", "-input_format", "mjpeg", "-video_size", "848x480", "-i", usb]
     else:
         try:
             src = ["-rtsp_transport", "tcp", "-timeout", "8000000", "-i", url or RTSP_FILE.read_text().strip()]
@@ -791,6 +791,23 @@ class Panel(BaseHTTPRequestHandler):
                 LAYOUT_FILE.parent.mkdir(parents=True, exist_ok=True)
                 LAYOUT_FILE.write_text(json.dumps([{k: x[k] for k in keep if k in x} for x in b]))
                 return self.send(200, {"ok": True})
+            if path == "/api/mic/level":
+                v = int(max(20, min(30000, float(b["min_rms"]))))
+                ms, mid = mics(), active_mic()
+                for m in ms:
+                    if m["id"] == mid:
+                        m["min_rms"] = v
+                write_private(MICS_FILE, ms)
+                write_settings({"min_rms": v})
+                live = False
+                if jim.running():
+                    try:
+                        urllib.request.urlopen(urllib.request.Request(WATCH + "/min_rms", json.dumps({"min_rms": v}).encode(),
+                                                                      {"Content-Type": "application/json", "X-Jim-Panel": "1"}), timeout=3).read()
+                        live = True
+                    except Exception:
+                        pass
+                return self.send(200, {"ok": True, "min_rms": v, "live": live})
             if path == "/api/snooze":
                 return self.proxy("/snooze", "POST", json.dumps({"seconds": b.get("seconds", 10)}).encode())
             if path == "/api/settings":

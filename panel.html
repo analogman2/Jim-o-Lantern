@@ -63,7 +63,8 @@ pre.console{margin:0;max-height:300px;overflow:auto;font:12px/1.4 ui-monospace,m
 .dp{background:var(--g-panel);border:1px solid var(--g-line);border-radius:4px;padding:6px 10px 8px;position:relative;overflow:hidden;min-width:0;display:flex;flex-direction:column}
 .dt{font-size:13px;font-weight:500;color:var(--g-text);margin:0 -10px 4px;padding:0 10px 2px;cursor:grab;display:flex;align-items:center;gap:6px;user-select:none;position:relative;z-index:2}
 .dt:hover{background:rgba(255,255,255,.03)}.dt .x{margin-left:auto;border:0;background:none;color:var(--g-mute);font-size:16px;line-height:1;cursor:pointer;padding:2px 4px;border-radius:3px;visibility:hidden}
-.dp:hover .dt .x{visibility:visible}.dt .x:hover{color:var(--g-text);background:#2c3235}
+.dp:hover .dt .x{visibility:visible}
+.dsel{width:auto;max-width:60%;min-width:0;font-size:12px;padding:1px 4px;background:#22252b;border:1px solid #2c3235;border-radius:3px;color:var(--g-text);cursor:pointer}.dt .x:hover{color:var(--g-text);background:#2c3235}
 .rs{position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;z-index:3;background:linear-gradient(135deg,transparent 50%,#5a6066 50%,#5a6066 60%,transparent 60%,transparent 72%,#5a6066 72%,#5a6066 82%,transparent 82%)}
 .dp.resizing{outline:1px dashed var(--g-blue)}
 .dtools{display:flex;gap:6px;align-items:center}.dtools select,.dbtn{background:#22252b;color:var(--g-text);border:1px solid var(--g-line);border-radius:4px;font:inherit;font-size:12px;padding:4px 8px;width:auto;cursor:pointer}
@@ -74,7 +75,11 @@ pre.console{margin:0;max-height:300px;overflow:auto;font:12px/1.4 ui-monospace,m
 .vscale span{position:absolute;right:0;transform:translateY(50%)}
 .vbar{position:relative;width:26px;border-radius:3px;overflow:hidden;background:linear-gradient(to top,#73bf69 0%,#73bf69 55%,#fade2a 78%,#f2495c 100%)}
 .vbar i{position:absolute;left:0;right:0;top:0;height:100%;background:#22252b;transition:height .12s linear}
-.vbar b{position:absolute;left:-2px;right:-2px;height:2px;background:#fff;box-shadow:0 0 0 1px #000}
+.vbar{overflow:visible;cursor:ns-resize;touch-action:none}.vbar i{border-radius:3px 3px 0 0}
+.vbar b{position:absolute;left:-4px;right:-4px;height:3px;background:#fff;box-shadow:0 0 0 1px #000;cursor:ns-resize}
+.vbar b::before{content:"";position:absolute;left:-6px;right:-6px;top:-8px;bottom:-8px}
+.vbar b span{position:absolute;left:calc(100% + 6px);top:50%;transform:translateY(-50%);white-space:nowrap;font-size:11px;font-weight:600;color:#fff;background:#3d71d9;border-radius:3px;padding:1px 5px;display:none}
+.vbar.dragging b span,.vbar:hover b span{display:block}
 .vread{display:flex;flex-direction:column;justify-content:flex-end;min-width:0}.vread .dv{font-size:28px}.dash ul.log{max-height:none}.dash ul.log li{border-top-color:#22252b;color:var(--g-text)}
 .dash pre.console{max-height:none;background:#0b0c0e;color:#b7c0c8;margin:0}.dash .verdict{margin:0}.dash .yes{color:var(--g-green)}.dash .no{color:var(--g-mute)}.dash .err{color:var(--g-red)}
 @media (max-width:700px){.dgrid{display:flex;flex-direction:column}.dp{min-height:120px}.dp[data-h="360"]{height:340px}.dp[data-h="270"],.dp[data-h="320"]{height:280px}.rs{display:none}.dt{cursor:default}}
@@ -108,11 +113,11 @@ table.dtab td{padding:6px;border-bottom:1px solid #22252b;font-variant-numeric:t
    <div class="dp" data-id="fps" data-stat="fps" data-w="2" data-h="130"><div class="dt">Camera stream</div><div class="dv">—</div><div class="ds">frames / s</div><svg class="dsp"></svg></div>
    <div class="dp" data-id="wifi" data-stat="wifi" data-w="2" data-h="130"><div class="dt">LED Wi-Fi</div><div class="dv">—</div><div class="ds">signal</div><div class="gauge"><i></i></div></div>
    <div class="dp" data-id="state" data-w="12" data-h="80"><div class="dt">State</div><div class="dv" id="stateText" style="font-size:20px">—</div></div>
-   <div class="dp" data-id="hearing" data-w="2" data-h="360"><div class="dt">Mic level</div>
+   <div class="dp" data-id="hearing" data-w="2" data-h="360"><div class="dt">Mic level <select class="dsel" id="liveMicSel" title="the mic Jim listens with"></select></div>
     <div class="vmeter"><div class="vscale"><span style="bottom:100%">0</span><span style="bottom:75%">-20</span><span style="bottom:50%">-40</span><span style="bottom:25%">-60</span><span style="bottom:0">-80</span></div>
-     <div class="vbar"><i id="lvl"></i><b id="thr"></b></div>
+     <div class="vbar" id="vbar" title="drag the white line to change when Jim reacts"><i id="lvl"></i><b id="thr"><span id="thrTag"></span></b></div>
      <div class="vread"><div class="dv" id="lvlDb">—</div><div class="ds">dBFS</div><div class="ds" id="lvlText" style="margin-top:8px"></div></div></div></div>
-   <div class="dp" data-id="live" data-w="5" data-h="360"><div class="dt">Live camera</div><div class="media"><img class="view" id="live" alt=""><div class="ds" id="liveNote">Jim isn't running.</div></div></div>
+   <div class="dp" data-id="live" data-w="5" data-h="360"><div class="dt">Live camera <select class="dsel" id="liveCamSel" title="the camera Jim looks through"></select></div><div class="media"><img class="view" id="live" alt=""><div class="ds" id="liveNote">Jim isn't running.</div></div></div>
    <div class="dp" data-id="judged" data-w="5" data-h="360"><div class="dt">Last frame Jim judged</div><div class="media"><img class="view" id="judged" alt=""><div class="verdict" id="verdict"></div></div></div>
    <div class="dp" data-id="resp" data-w="6" data-h="270"><div class="dt">Response times <span class="sub">· per reply, seconds</span></div><div class="chart" id="chResp"></div></div>
    <div class="dp" data-id="net" data-w="6" data-h="270"><div class="dt">Network latency <span class="sub">· ms, last 6 min</span></div><div class="chart" id="chNet"></div></div>
@@ -302,16 +307,40 @@ document.addEventListener("click", e => { if (e.target.dataset?.kill) control("s
 let judgedAt = 0;
 const dbfs = v => v > 0 ? 20 * Math.log10(v / 32768) : -90;
 const pctDb = db => Math.max(0, Math.min(100, (db + 80) / 80 * 100));      // -80..0 dBFS -> 0..100 %
+let thrDrag = null;                                          // dB while the white line is being dragged
 function vmeter(mic) {
+  lastMic = mic;
   if (mic.age_s == null || mic.age_s > 2) {                 // no sound frames: the mic is unplugged or failed
     $("lvl").style.height = "100%"; $("lvlDb").textContent = "no sound"; $("lvlDb").style.color = "#f2495c";
     $("lvlText").textContent = "The microphone isn't sending anything (unplugged?). Jim keeps retrying."; return;
   }
-  const db = dbfs(mic.level), th = dbfs(mic.thresh), on = mic.level > mic.thresh;
+  const db = dbfs(mic.level), th = thrDrag ?? dbfs(mic.thresh), on = mic.level > mic.thresh;
   $("lvl").style.height = (100 - pctDb(db)) + "%"; $("thr").style.bottom = `calc(${pctDb(th)}% - 1px)`;
+  $("thrTag").textContent = Math.round(th) + " dB";
   $("lvlDb").textContent = db <= -89 ? "—" : Math.round(db) + " dB"; $("lvlDb").style.color = on ? "#73bf69" : "#8e8e9a";
-  $("lvlText").innerHTML = `Jim reacts above <b>${Math.round(th)} dB</b>` + (on ? "<br>hearing something" : "");
+  const floorHigher = mic.min_rms && mic.thresh > mic.min_rms * 1.05;
+  $("lvlText").innerHTML = `Jim reacts above <b>${Math.round(th)} dB</b>` + (on ? "<br>hearing something" : "")
+    + (floorHigher && thrDrag == null ? `<br><span title="Jim also needs speech to be several times louder than the room's background noise">set to ${Math.round(dbfs(mic.min_rms))} dB; the background noise raises it now</span>` : "");
 }
+let lastMic = null;
+// drag the white line: Jim's minimum loudness (min_rms), live in Jim and kept in jim.toml and the mic in use
+$("vbar").addEventListener("pointerdown", e => {
+  if (!status.running) return toast("Start Jim to change his reaction level here (or use the Mic tab).");
+  e.preventDefault(); e.stopPropagation();
+  const bar = $("vbar"), r = bar.getBoundingClientRect();
+  const dbAt = y => Math.max(-80, Math.min(-3, -80 + (1 - (y - r.top) / r.height) * 80));
+  bar.classList.add("dragging"); bar.setPointerCapture(e.pointerId);
+  thrDrag = dbAt(e.clientY); if (lastMic) vmeter(lastMic);
+  const move = ev => { thrDrag = dbAt(ev.clientY); if (lastMic) vmeter(lastMic) };
+  const up = async () => {
+    bar.classList.remove("dragging"); bar.removeEventListener("pointermove", move); bar.removeEventListener("pointerup", up);
+    const rms = Math.round(32768 * Math.pow(10, thrDrag / 20)), db = Math.round(thrDrag);
+    try { const d = await (await post("/api/mic/level", {min_rms: rms})).json(); toast(`Jim now reacts above ${db} dB (${d.min_rms})` + (d.live ? "." : ": saved; restart Jim to use it.")) }
+    catch (err) { toast("Not changed: " + err.message) }
+    setTimeout(() => { thrDrag = null }, 1200);                 // until Jim reports the new level
+  };
+  bar.addEventListener("pointermove", move); bar.addEventListener("pointerup", up);
+});
 async function pollMic() {
   if (!status.running || !$("tab-live").classList.contains("on")) return;
   try { const m = await (await api("/jim/mic.json")).json(); vmeter(m) } catch (e) {}
@@ -509,7 +538,7 @@ for (const el of grid.children) {
   el.insertAdjacentHTML("beforeend", `<div class="rs" title="drag to resize"></div>`);
   head.querySelector(".x").onclick = () => { layout.find(l => l.id === el.dataset.id).hidden = true; applyLayout(); draft() };
   head.addEventListener("pointerdown", e => {                           // move
-    if (e.target.closest(".x") || e.button !== 0 || innerWidth <= 700) return;
+    if (e.target.closest(".x, select") || e.button !== 0 || innerWidth <= 700) return;
     e.preventDefault();
     const l = layout.find(x => x.id === el.dataset.id), start = cellAt(e.clientX, e.clientY), x0 = l.x, y0 = l.y;
     const orig = new Map(layout.map(o => [o, {x: o.x, y: o.y}]));      // others start from here on every move
@@ -565,7 +594,24 @@ async function loadCams(snaps) {
   try { CAMS = await (await api("/api/cameras")).json() } catch (e) { return }
   paintCams(snaps); liveKey = null; updateLive();
 }
+function liveSelects() {
+  $("liveCamSel").innerHTML = CAMS.cameras.map(c => `<option value="${esc(c.id)}" ${c.id === CAMS.active ? "selected" : ""}>${esc(c.name)}</option>`).join("")
+    + (CAMS.active ? "" : `<option value="" selected>none in use</option>`);
+  $("liveMicSel").innerHTML = MICS.mics.map(m => `<option value="${esc(m.id)}" ${m.id === MICS.active ? "selected" : ""}>${esc(m.name)}</option>`).join("")
+    + (MICS.active ? "" : `<option value="" selected>custom (Mic tab)</option>`);
+}
+async function useFromLive(kind, id) {
+  const list = kind === "cameras" ? CAMS.cameras : MICS.mics, item = list.find(x => x.id === id); if (!item) return;
+  try {
+    const d = await (await post(`/api/${kind}/${encodeURIComponent(id)}/use`)).json();
+    await (kind === "cameras" ? loadCams(false) : loadMics());
+    toast(d.restart ? `${item.name} chosen. Restart Jim to ${kind === "cameras" ? "look through" : "listen with"} it.` : `${item.name} is in use.`, d.restart);
+  } catch (e) { toast(e.message); liveSelects() }
+}
+$("liveCamSel").onchange = e => useFromLive("cameras", e.target.value);
+$("liveMicSel").onchange = e => useFromLive("mics", e.target.value);
 function paintCams(snaps) {
+  liveSelects();
   $("cams").innerHTML = CAMS.cameras.map(c => `<div class="camcard ${c.id === CAMS.active ? "active" : ""}" data-cam="${esc(c.id)}">
     <div class="thumb"><img data-snap="${esc(c.id)}" alt=""><span class="snapnote muted">Press ⟳ for a preview</span></div>
     <div><b>${esc(c.name)}</b>${c.id === CAMS.active ? '<span class="badge">In use</span>' : ""}
@@ -631,6 +677,7 @@ let MICS = {mics: [], active: null, devices: []}, editingMic = null;
 const toDb = v => v > 0 ? Math.round(20 * Math.log10(v / 32768)) : null;
 async function loadMics() { try { MICS = await (await api("/api/mics")).json(); paintMics() } catch (e) {} }
 function paintMics() {
+  liveSelects();
   const desc = d => (MICS.devices.find(([x]) => x === d) || [d, d])[1] || d;
   $("mics").innerHTML = MICS.mics.map(m => `<div class="camcard ${m.id === MICS.active ? "active" : ""}" data-mic="${esc(m.id)}">
     <div><b>${esc(m.name)}</b>${m.id === MICS.active ? '<span class="badge">In use</span>' : ""}<div class="sub">${esc(desc(m.mic))}</div></div>
