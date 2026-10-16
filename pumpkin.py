@@ -17,6 +17,8 @@ import time
 
 import numpy as np
 
+import jimconfig as J                                # config.toml + secrets.toml in ~/.config/jim/
+
 _cuda12_loaded = False
 
 
@@ -248,34 +250,20 @@ def alsa_source(device):
     return MIC_RATE, gen()
 
 
-CAMERAS_FILE = os.path.expanduser("~/.config/jim/cameras.json")   # saved cameras (control panel), with passwords
-
-
 def saved_camera_url(cam_id):
-    """A camera saved in the control panel: its RTSP address (with the password) or its USB device; None if unknown."""
-    import urllib.parse
-    try:
-        with open(CAMERAS_FILE) as f:
-            c = next(c for c in json.load(f) if c.get("id") == cam_id)
-    except (OSError, ValueError, StopIteration):
+    """A saved camera (config.toml): its USB device or its RTSP address with the password (secrets.toml); None if unknown."""
+    url = J.device_url(cam_id)
+    if not url:
         print(f"[camera] no saved camera '{cam_id}' (control panel: Camera tab): Jim is blind", file=sys.stderr)
-        return None
-    if c.get("kind") == "usb":
-        return c.get("device")
-    q = lambda v: urllib.parse.quote(v, safe="")
-    return f"rtsp://{q(c['user'])}:{q(c['password'])}@{c['ip']}:554/{c['path']}"
+    return url
 
 
 def camera_audio_url(cam_id):
     """The RTSP address of a saved security camera, for its built-in microphone (mic = "camera:<id>")."""
-    import urllib.parse
-    try:
-        with open(CAMERAS_FILE) as f:
-            c = next(c for c in json.load(f) if c.get("id") == cam_id and c.get("kind") == "rtsp")
-    except (OSError, ValueError, StopIteration):
+    c = J.camera(cam_id)
+    if not c or c.get("kind") != "rtsp":
         sys.exit(f"No saved security camera '{cam_id}' for the microphone (control panel: Camera tab).")
-    q = lambda v: urllib.parse.quote(v, safe="")
-    return f"rtsp://{q(c['user'])}:{q(c['password'])}@{c['ip']}:554/{c['path']}"
+    return J.camera_url(c)
 
 
 def rtsp_audio_source(url, name):
@@ -489,21 +477,6 @@ class Mic(threading.Thread):
 
 
 # ------------------------------------------------------------------- camera
-
-CAMERA_FILE = os.path.expanduser("~/.config/jim/rtsp")  # written by set_camera.sh
-
-
-def camera_url():
-    """The camera's RTSP address: $JIM_RTSP, else ~/.config/jim/rtsp (kept out of the repo
-    because it contains the camera password)."""
-    if os.environ.get("JIM_RTSP"):
-        return os.environ["JIM_RTSP"].strip()
-    try:
-        with open(CAMERA_FILE) as f:
-            return f.read().strip() or None
-    except OSError:
-        return None
-
 
 class Camera(threading.Thread):
     """Keeps the latest frame of an RTSP camera in memory as a small JPEG, so Jim can see
@@ -1768,25 +1741,31 @@ class ServerVoice(Voice):
 
 # ------------------------------------------------------------------- main loop
 
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jim.toml")
+CONFIG_FILE = str(J.CONFIG)
 
 
-def load_config(path=CONFIG_FILE):
-    """This machine's settings from jim.toml (see jim.example.toml); {} if there isn't one."""
+def load_config(path=CONFIG_FILE, jim_id=""):
+    """(this Jim's settings, his id): his [jims.<id>] section of config.toml (the first Jim if no id). A flat
+    settings file with no [jims] section is read as one Jim's settings, as before."""
     import tomllib
     try:
-        with open(path, "rb") as f:
-            return tomllib.load(f)
-    except FileNotFoundError:
-        return {}
+        data = J.read_toml(path)
     except tomllib.TOMLDecodeError as e:
         sys.exit(f"{path} has a mistake in it: {e}")
+    if not data and str(path) == CONFIG_FILE:            # an older setup: move it into config.toml once
+        if J.migrate(os.path.dirname(os.path.abspath(__file__))):
+            print(f"[config] moved the old settings into {J.CONFIG} (passwords: {J.SECRETS})")
+        data = J.read_toml(path)
+    if "jims" not in data:
+        return data, jim_id
+    J.use(path)
+    return J.jim_settings(J.load(), jim_id)[::-1]
 
 
 def build_parser():
     """Every option (the control panel builds its forms from these too)."""
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--config", default=CONFIG_FILE, help="this Jim's settings file (each Jim has his own)")
+    p.add_argument("--config", default=CONFIG_FILE, help="the settings file (config.toml: every Jim, camera, mic and speaker)")
     p.add_argument("--name", default="Jim", help="this Jim's name, for the control panel and logs")
     p.add_argument("--wled", default=None, help="WLED IP address (usually set in jim.toml)")
     p.add_argument("--brightness", type=float, default=0.7, help="0..1 overall LED brightness")
@@ -1913,8 +1892,10 @@ def main():
     # jim.toml supplies the defaults; anything on the command line still wins.
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("--config", default=CONFIG_FILE)
-    config_file = pre.parse_known_args()[0].config
-    config = load_config(config_file)
+    pre.add_argument("--jim-id", default="")
+    known_args = pre.parse_known_args()[0]
+    config_file = known_args.config
+    config, jim_id = load_config(config_file, known_args.jim_id)
     options = {a.dest for a in p._actions}
     settings = {k: v for k, v in config.items() if not isinstance(v, dict)}
     unknown = sorted(k for k in settings if k not in options)
@@ -1922,6 +1903,7 @@ def main():
         print(f"[config] {os.path.basename(config_file)}: ignoring unknown setting(s): {', '.join(unknown)}", file=sys.stderr)
     p.set_defaults(**{k: v for k, v in settings.items() if k in options})
     args = p.parse_args()
+    args.jim_id = args.jim_id or jim_id
     persona = PERSONALITIES[args.personality]
     if args.voice_design == JACK_VOICE:              # not set by hand: this personality's voice
         args.voice_design = persona["voice"]
@@ -2015,9 +1997,9 @@ def main():
         if a.camera_id and not a.no_camera:
             url = saved_camera_url(a.camera_id)
             return url, tuple(float(v) for v in a.camera_crop.split(",")) if a.camera_crop else None
-        url = a.usb_camera if src == "usb" else camera_url() if src in ("auto", "rtsp") else None
+        url = a.usb_camera if src == "usb" else None
         if src == "rtsp" and not url:
-            print("[camera] no security camera saved yet (./set_camera.sh or the control panel): Jim is blind", file=sys.stderr)
+            print("[camera] no camera chosen (control panel: Camera tab, or camera_id in config.toml): Jim is blind", file=sys.stderr)
         return url, tuple(float(v) for v in a.camera_crop.split(",")) if a.camera_crop else None
 
     url, crop = camera_choice(args)
@@ -2047,13 +2029,12 @@ def main():
     # listens while a pumpkin talks, so they never mistake each other's voices for a kid
     import urllib.request
     duo_inbox, _up = queue.Queue(), {}
-    INSTANCES = os.path.expanduser("~/.config/jim/instances.json")
-
     def jim_list():
+        """Every Jim in config.toml, in order: [{id, name, watch_port}]."""
         try:
-            with open(INSTANCES) as f:
-                return json.load(f) if args.jim_id else []
-        except (OSError, ValueError):
+            return [{"id": k, "name": v.get("name", k), "watch_port": v.get("watch_port", 8780)}
+                    for k, v in J.load()["jims"].items()] if args.jim_id else []
+        except Exception:
             return []
 
     def partners():
@@ -2442,7 +2423,7 @@ def main():
             """The control panel changed the camera, mic or speaker in jim.toml: switch to them now, no restart."""
             p = build_parser()
             known = {x.dest for x in p._actions}
-            p.set_defaults(**{k: v for k, v in load_config(args.config).items() if not isinstance(v, dict) and k in known})
+            p.set_defaults(**{k: v for k, v in load_config(args.config, args.jim_id)[0].items() if not isinstance(v, dict) and k in known})
             new = p.parse_args([])               # jim.toml as it is now (the panel only adds the viewer port)
             changed = []
             url, crop = camera_choice(new)

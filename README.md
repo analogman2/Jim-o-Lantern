@@ -90,11 +90,9 @@ What I used:
    Jim expects Agentora's speech service on `http://127.0.0.1:7895` (`systemctl --user status
    agentora-speech`). Without it, he falls back to the local copies `setup.sh` installs.
 3. Flash the [firmware patch](#firmware-patch) to your WLED controller (or use `--mic default`).
-4. Copy the settings file and put in your WLED controller's address (and your mic, speaker and
-   camera if you use them). `jim.toml` isn't committed, so your addresses stay private:
-   ```bash
-   cp jim.example.toml jim.toml
-   ```
+4. Start the control panel (`./panel.sh`, below) and set your WLED controller's address, mic, speaker and camera
+   there, or write `~/.config/jim/config.toml` by hand from [`config.example.toml`](config.example.toml). The
+   settings live outside the repo, so your addresses and passwords stay private.
 5. Start Jim:
    ```bash
    ./start.sh
@@ -111,8 +109,8 @@ stopping the panel stops Jim) and has tabs for:
 
 - **Live:** the camera, the exact frame Jim last judged and the vision model's verdict, a hearing meter (how loud
   the mic is vs. what Jim reacts to), a log of wake-ups and replies, and Jim's console.
-- **Camera:** the security camera's IP, user, stream path and password (saved like `./set_camera.sh`: the
-  password only in `~/.config/jim/rtsp`), or a USB webcam; a Test button grabs a picture.
+- **Camera:** saved cameras (security cameras over RTSP, the other cameras on the same NVR, USB webcams) with
+  previews; the password goes only in `secrets.toml`.
 - **Mic:** pick the microphone, record 3 seconds to see the background noise and get a suggested minimum loudness.
 - **Voice:** the voice descriptions (normal and gentle), pitch, intonation, echo and grit, with a Preview that
   plays in the browser.
@@ -122,7 +120,7 @@ stopping the panel stops Jim) and has tabs for:
   committed) and are deleted after `record_keep_days` (7 by default).
 
 **More than one Jim:** press **＋ Jim** in the panel's header to add another pumpkin with his own LED controller.
-Each Jim has his own settings file (`jim.toml` for the first, `jims/<id>.toml` for the others), camera, mic, speaker,
+Each Jim has his own section of `config.toml` (`[jims.<id>]`), camera, mic, speaker,
 recordings folder and metrics; the header shows each one's state, and every tab shows the selected Jim. Saved cameras,
 mics and speakers are shared, but a USB mic, webcam or speaker can only serve one Jim at a time (the panel warns).
 They share one loaded copy of the chat model.
@@ -165,12 +163,16 @@ such as Tailscale; never expose it as-is, since it controls the cameras and hold
 | `./start.sh --ollama-model qwen3.6:27b` | Smarter chat model (needs about 11 GB more video memory) |
 | `./start.sh --brain claude` | Use the Claude API instead of Ollama (asks for an API key) |
 
-**Settings:** `jim.toml` holds this machine's settings: the WLED address, mic, speaker,
-service URLs and camera. Any option above can go there with underscores instead of dashes
-(`--min-rms 800` becomes `min_rms = 800`); options on the command line still win.
-`jim.example.toml` lists them. The camera password is never stored there: `./set_camera.sh`
-asks for it, using the camera's `ip` and `user` from `jim.toml`, and saves the full address to
-`~/.config/jim/rtsp`, readable only by you.
+**Settings** live in two files in `~/.config/jim/`, outside the repo (layout: [`config.example.toml`](config.example.toml)):
+
+- `config.toml`: everything except passwords: each Jim (`[jims.<id>]`: his LED controller, camera, mic, speaker,
+  voice and replies), the saved cameras, mics and speakers, and the panel's dashboard layout. Any option above can be
+  a setting, with underscores instead of dashes (`--min-rms 800` becomes `min_rms = 800`); the command line still wins.
+- `secrets.toml`: only the camera passwords, readable only by you.
+
+The control panel writes both. `./set_camera.sh <ip> <user> [path]` saves a security camera from the terminal (it asks
+for the password). An older setup (`jim.toml` and the files the panel used to keep) is moved into these two files
+automatically the first time the new version starts.
 
 The 12 greetings are recorded once and saved in `cache/`, so restarts are quick.
 

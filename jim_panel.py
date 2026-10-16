@@ -18,31 +18,18 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import pumpkin as P  # noqa: E402
+import jimconfig as J  # noqa: E402  (config.toml + secrets.toml in ~/.config/jim/)
 
-CONFIG_DIR = Path.home() / ".config" / "jim"
-INSTANCES_FILE = CONFIG_DIR / "instances.json"    # the Jims this panel runs: id, name, config file, viewer port
-RTSP_FILE = Path(P.CAMERA_FILE)
-LAYOUT_FILE = Path.home() / ".config" / "jim" / "dashboard.json"   # the Live tab's saved panel layout
 _tl = threading.local()                           # the Jim the current request is about (?jim=<id>)
 
 
 def instances():
-    try:
-        out = json.loads(INSTANCES_FILE.read_text())
-        if out:
-            return out
-    except (OSError, ValueError):
-        pass
-    return [{"id": "jim", "name": "Jim", "config": "jim.toml", "watch_port": 8780}]
+    """The Jims in config.toml, in order: [{id, name, watch_port}]."""
+    return [{"id": k, "name": v.get("name", k), "watch_port": v.get("watch_port", 8780)} for k, v in J.load()["jims"].items()]
 
 
 def inst(i=None):
     return i or getattr(_tl, "inst", None) or instances()[0]
-
-
-def config_path(i=None):
-    p = Path(inst(i)["config"])
-    return p if p.is_absolute() else HERE / p
 
 
 def watch_url(i=None):
@@ -63,7 +50,7 @@ PYTHON = HERE / ".venv" / "bin" / "python"
 # tab -> [(section title, [option names])]; anything not listed isn't shown
 GROUPS = {
     "camera": [("Picture sent to the AI", ["camera_crop", "camera_width"])],
-    "mic": [],                                   # saved mics (MICS_FILE) set mic, min_rms, vad_ratio, silence, wled_gain
+    "mic": [],                                   # saved mics ([mics] in config.toml) set mic, min_rms, vad_ratio, silence, wled_gain
     "voice": [("Voice", ["voice_design", "gentle_voice_design", "pitch", "intonation", "echo", "grit", "lip_offset"]),
               ("Engine", ["tts", "speech_url"])],
     "responses": [("Personality", ["personality", "house", "temperature", "max_words"]),
@@ -80,9 +67,6 @@ SLIDERS = {"pitch": (0.7, 0.06, 1.0), "intonation": (0.85, 0.15, 1.0), "echo": (
            "lip_offset": (0.0, 0.025, None), "temperature": (0.2, 0.15, None), "max_words": (5, 5, None),
            "reset_after": (10, 10, None), "eyes_timeout": (10, 10, None), "snooze": (5, 5, None), "start_delay": (0, 15, None),
            "brightness": (0.1, 0.1, None), "banter": (0.0, 0.1, None), "banter_max": (1, 1, None)}
-CAMERAS_FILE = CONFIG_DIR / "cameras.json"      # saved cameras, with passwords: only you can read it
-MICS_FILE = CONFIG_DIR / "mics.json"
-SPEAKERS_FILE = CONFIG_DIR / "speakers.json"
 VOLUME = (0.25, 0.125)                           # the volume slider: 1-10 -> 0.25 .. 1.375; 7 = 1.0 (as made)
 LONG = {"voice_design", "gentle_voice_design", "house"}
 PICK = {"mic": "mics", "speaker": "speakers", "usb_camera": "cameras", "ollama_model": "models"}
@@ -103,53 +87,14 @@ def options():
 
 
 def load_config(i=None):
-    try:
-        return tomllib.loads(config_path(i).read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        return {}
-
-
-def toml_value(v):
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, (int, float)):
-        return repr(v)
-    return json.dumps(str(v), ensure_ascii=False)
+    """The selected Jim's settings ([jims.<id>] in config.toml)."""
+    return dict(J.load()["jims"].get(inst(i)["id"], {}))
 
 
 def write_settings(values, section=None):
-    """Set keys in jim.toml, keeping every other line and comment. A key that's commented out (# key = ...) is
-    replaced in place; a new one goes at the end of its section. section=None is the top level."""
-    CONFIG = config_path()
-    lines = CONFIG.read_text().splitlines() if CONFIG.exists() else []
-    headers = [i for i, l in enumerate(lines) if re.match(r"^\s*\[[^\]]+\]\s*$", l)]
-    if section is None:
-        lo, hi = 0, headers[0] if headers else len(lines)
-    else:
-        start = next((i for i in headers if lines[i].strip() == f"[{section}]"), None)
-        if start is None:
-            lines += ["", f"[{section}]"]
-            start = len(lines) - 1
-            headers.append(start)
-        lo, hi = start + 1, next((i for i in headers if i > start), len(lines))
-    for key, v in values.items():
-        new = f"{key} = {toml_value(v)}"
-        hit = next((i for i in range(lo, hi) if re.match(rf"^\s*{re.escape(key)}\s*=", lines[i])), None)
-        if hit is None:
-            hit = next((i for i in range(lo, hi) if re.match(rf"^\s*#\s*{re.escape(key)}\s*=", lines[i])), None)
-        if hit is not None:
-            comment = re.search(r"\s+#[^\"']*$", lines[hit]) if not lines[hit].lstrip().startswith("#") else None
-            lines[hit] = new + (comment.group(0) if comment else "")
-        else:
-            at = hi
-            while at > lo and not lines[at - 1].strip():      # before the blank lines that end the section
-                at -= 1
-            lines.insert(at, new)
-            hi += 1
-    tmp = CONFIG.with_suffix(".tmp")
-    tmp.write_text("\n".join(lines) + "\n")
-    tomllib.loads(tmp.read_text())                     # never save a file Jim couldn't read
-    tmp.replace(CONFIG)
+    """Set keys in the selected Jim's section of config.toml."""
+    jid = inst()["id"]
+    J.update(lambda cfg: cfg["jims"].setdefault(jid, {}).update({k: v for k, v in values.items()}))
 
 
 def coerce(spec, v):
@@ -166,38 +111,7 @@ def coerce(spec, v):
 
 
 # ---------------------------------------------------------------- the security camera (password file)
-def camera_settings():
-    cam = load_config().get("camera", {})
-    saved = None
-    try:
-        saved = urllib.parse.urlsplit(RTSP_FILE.read_text().strip())
-    except OSError:
-        pass
-    return {"ip": cam.get("ip") or (saved.hostname if saved else ""), "user": cam.get("user") or (saved.username if saved else ""),
-            "path": cam.get("path") or (saved.path.lstrip("/") if saved else "h264Preview_01_main"),
-            "password_saved": bool(saved and saved.password)}
 
-
-def save_camera(ip, user, path, password=None):
-    """Like set_camera.sh: the address with the password goes to ~/.config/jim/rtsp (only you can read it); jim.toml
-    keeps the rest. Without a new password the saved one is kept."""
-    if not re.fullmatch(r"[\w.-]+", ip or "") or not re.fullmatch(r"[\w.@-]+", user or "") or not re.fullmatch(r"[\w./-]*", path or ""):
-        raise ValueError("check the IP, user and stream path")
-    if password is None:
-        try:
-            password = urllib.parse.unquote(urllib.parse.urlsplit(RTSP_FILE.read_text().strip()).password or "")
-        except OSError:
-            password = ""
-    if not password:
-        raise ValueError("enter the camera's password")
-    write_settings({"ip": ip, "user": user, "path": path}, section="camera")
-    RTSP_FILE.parent.mkdir(parents=True, exist_ok=True)
-    old = os.umask(0o077)
-    try:
-        RTSP_FILE.write_text(f"rtsp://{urllib.parse.quote(user, safe='')}:{urllib.parse.quote(password, safe='')}@{ip}:554/{path}\n")
-    finally:
-        os.umask(old)
-    RTSP_FILE.chmod(0o600)
 
 
 def grab_frame(source, usb, url=None):
@@ -210,10 +124,9 @@ def grab_frame(source, usb, url=None):
         src = ["-f", "v4l2", "-input_format", "mjpeg", "-video_size", "848x480", "-i", usb, "-vf", "select=gte(n\\,8),scale=768:-2"]
         secret = None
     else:
-        try:
-            secret = url or RTSP_FILE.read_text().strip()
-        except OSError:
-            raise ValueError("no security camera saved yet")
+        if not url:
+            raise ValueError("no security camera chosen")
+        secret = url
         src = ["-rtsp_transport", "tcp", "-timeout", "8000000", "-i", secret, "-vf", "scale=768:-2"]
     try:
         r = subprocess.run(["ffmpeg", "-loglevel", "error", *src, "-frames:v", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "-"],
@@ -241,24 +154,21 @@ def stream_cmd(source, usb, url=None):
     if source == "usb":
         src = ["-f", "v4l2", "-input_format", "mjpeg", "-video_size", "848x480", "-i", usb]
     else:
-        try:
-            src = ["-rtsp_transport", "tcp", "-timeout", "8000000", "-i", url or RTSP_FILE.read_text().strip()]
-        except OSError:
+        if not url:
             return None
+        src = ["-rtsp_transport", "tcp", "-timeout", "8000000", "-i", url]
     return ["ffmpeg", "-loglevel", "quiet", *src, "-an", "-vf", "fps=5,scale=768:-2", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "5", "-"]
 
 
 def jims_camera(i=None):
-    """Which camera this Jim is using right now (from his settings): ("usb", device) or ("rtsp", camera id); None if he
-    isn't running or is blind."""
+    """Which camera this Jim is using right now: ("usb", device) or ("rtsp", camera id); None if he isn't running or
+    is blind."""
     if not cur_jim(i).running():
         return None
-    cfg = load_config(i)
-    if cfg.get("camera_id"):
-        c = next((c for c in read_private(CAMERAS_FILE, []) if c["id"] == cfg["camera_id"]), None)
-        return (("usb", c["device"]) if c["kind"] == "usb" else ("rtsp", c["id"])) if c else None
-    src = cfg.get("camera_source", "auto")
-    return ("usb", cfg.get("usb_camera", "/dev/video0")) if src == "usb" else ("rtsp", None) if src != "none" else None
+    c = J.load()["cameras"].get(load_config(i).get("camera_id") or "")
+    if not c:
+        return None
+    return ("usb", c.get("device")) if c.get("kind") == "usb" else ("rtsp", load_config(i)["camera_id"])
 
 
 def webcam_holder(dev):
@@ -270,21 +180,10 @@ def webcam_holder(dev):
 
 
 # ---------------------------------------------------------------- saved cameras and mics
-def read_private(path, default):
-    try:
-        return json.loads(path.read_text())
-    except (OSError, ValueError):
-        return default
 
 
-def write_private(path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    old = os.umask(0o077)
-    try:
-        tmp = path.with_suffix(".tmp"); tmp.write_text(json.dumps(data, indent=1)); tmp.replace(path)
-    finally:
-        os.umask(old)
-    path.chmod(0o600)
+
+
 
 
 def new_id(name, taken):
@@ -296,36 +195,27 @@ def new_id(name, taken):
 
 
 def cameras():
-    """Saved cameras. The first time, the camera Jim already uses and any plugged-in webcams are added."""
-    cams = read_private(CAMERAS_FILE, None)
-    if cams is None:
-        cams = []
-        try:
-            u = urllib.parse.urlsplit(RTSP_FILE.read_text().strip())
-            cams.append({"id": "security-camera", "name": "Security camera", "kind": "rtsp", "ip": u.hostname, "user": urllib.parse.unquote(u.username or ""),
-                         "password": urllib.parse.unquote(u.password or ""), "path": u.path.lstrip("/")})
-        except OSError:
-            pass
-        for dev, name in devices()["cameras"]:
-            cams.append({"id": new_id(name, {c["id"] for c in cams}), "name": name.split(":")[0], "kind": "usb", "device": dev})
-        write_private(CAMERAS_FILE, cams)
-    return cams
+    """Saved cameras ([cameras] in config.toml) with their passwords (secrets.toml)."""
+    cfg, sec = J.load(), J.load_secrets()
+    return [dict(v, id=k, password=sec["cameras"].get(k, {}).get("password", "")) for k, v in cfg["cameras"].items()]
+
+
+def save_cameras(cams):
+    """Cameras go to config.toml, their passwords to secrets.toml."""
+    J.update(lambda cfg: cfg.__setitem__("cameras", {c["id"]: {k: v for k, v in c.items() if k not in ("id", "password")} for c in cams}))
+    sec = J.load_secrets()
+    sec["cameras"] = {c["id"]: {"password": c["password"]} for c in cams if c.get("password")}
+    J.save_secrets(sec)
+
+
+def save_list(section, items):
+    """Saved mics or speakers ([mics] / [speakers] in config.toml)."""
+    J.update(lambda cfg: cfg.__setitem__(section, {x["id"]: {k: v for k, v in x.items() if k != "id" and v is not None} for x in items}))
 
 
 def active_camera(cams=None):
-    cfg, cams = load_config(), cams if cams is not None else cameras()
-    if cfg.get("camera_id"):
-        return cfg["camera_id"] if any(c["id"] == cfg["camera_id"] for c in cams) else None
-    src = cfg.get("camera_source", "auto")
-    if src == "none":
-        return None
-    if src == "usb":
-        return next((c["id"] for c in cams if c["kind"] == "usb" and c.get("device") == cfg.get("usb_camera", "/dev/video0")), None)
-    try:
-        u = urllib.parse.urlsplit(RTSP_FILE.read_text().strip())
-    except OSError:
-        return None
-    return next((c["id"] for c in cams if c["kind"] == "rtsp" and c.get("ip") == u.hostname and c.get("path") == u.path.lstrip("/")), None)
+    cid = load_config().get("camera_id") or ""
+    return cid if any(c["id"] == cid for c in (cams if cams is not None else cameras())) else None
 
 
 def public_camera(c):
@@ -336,7 +226,7 @@ def public_camera(c):
 
 
 def camera_url(c):
-    return f"rtsp://{urllib.parse.quote(c['user'], safe='')}:{urllib.parse.quote(c['password'], safe='')}@{c['ip']}:554/{c['path']}"
+    return J.camera_url(c)
 
 
 def save_camera_profile(b):
@@ -364,7 +254,7 @@ def save_camera_profile(b):
         old.clear(); old.update(c, id=b["id"]); c = old
     else:
         c["id"] = new_id(name, {x["id"] for x in cams}); cams.append(c)
-    write_private(CAMERAS_FILE, cams)
+    save_cameras(cams)
     if c["kind"] == "rtsp":
         threading.Thread(target=probe_camera_audio, args=([c],), daemon=True).start()
     if active_camera(cams) == c["id"] or b.get("use"):
@@ -426,7 +316,7 @@ def add_nvr_channels(c, chosen):
         new = {"id": new_id(name, {x["id"] for x in cams}), "name": name, "kind": "rtsp", "ip": c["ip"], "user": c["user"],
                "password": c["password"], "path": path}
         cams.append(new); added.append(new["id"])
-    write_private(CAMERAS_FILE, cams)
+    save_cameras(cams)
     threading.Thread(target=probe_camera_audio, args=([x for x in cams if x["id"] in added],), daemon=True).start()
     return added
 
@@ -448,15 +338,8 @@ MIC_KEYS = ("mic", "min_rms", "level_mode", "vad_ratio", "silence", "wled_gain")
 
 
 def mics():
-    """Saved microphones (a device plus how sensitive Jim is with it). The first time, Jim's current mic is added."""
-    ms = read_private(MICS_FILE, None)
-    if ms is None:
-        cfg, opts = load_config(), options()
-        cur = {k: cfg.get(k, opts[k]["default"]) for k in MIC_KEYS}
-        desc = dict(devices()["mics"]).get(cur["mic"], cur["mic"])
-        ms = [{"id": "current", "name": desc.split(",")[0] or "Current mic", **cur}]
-        write_private(MICS_FILE, ms)
-    return ms
+    """Saved microphones (a device plus how sensitive Jim is with it), [mics] in config.toml."""
+    return [dict(v, id=k) for k, v in J.load()["mics"].items()]
 
 
 def active_mic(ms=None):
@@ -478,7 +361,7 @@ def save_mic_profile(b):
     else:
         was_active = False
         m["id"] = new_id(m["name"], {x["id"] for x in ms}); ms.append(m)
-    write_private(MICS_FILE, ms)
+    save_list("mics", ms)
     if was_active or b.get("use"):
         use_mic(m["id"])
     return m
@@ -494,15 +377,8 @@ def use_mic(mid):
 
 
 def speakers():
-    """Saved speakers (a playback device plus Jim's volume on it). The first time, the one Jim uses now is added."""
-    sp = read_private(SPEAKERS_FILE, None)
-    if sp is None:
-        cfg = load_config()
-        dev = cfg.get("speaker", "default")
-        desc = dict(devices()["speakers"]).get(dev, dev)
-        sp = [{"id": "current", "name": (desc.split(",")[0] or "Speaker")[:40], "speaker": dev, "volume": float(cfg.get("volume", 1.0))}]
-        write_private(SPEAKERS_FILE, sp)
-    return sp
+    """Saved speakers (a playback device plus Jim's volume on it), [speakers] in config.toml."""
+    return [dict(v, id=k) for k, v in J.load()["speakers"].items()]
 
 
 def active_speaker(sp=None):
@@ -522,7 +398,7 @@ def save_speaker_profile(b):
         old.clear(); old.update(x, id=b["id"]); x = old
     else:
         x["id"] = new_id(x["name"], {y["id"] for y in sp}); sp.append(x)
-    write_private(SPEAKERS_FILE, sp)
+    save_list("speakers", sp)
     if was_active or b.get("use"):
         use_speaker(x["id"])
     return x
@@ -577,7 +453,7 @@ def jims_summary():
                 state = "starting"
         cfg = load_config(i)
         out.append({"id": i["id"], "name": i["name"], "running": j.running(), "state": state, "wled": cfg.get("wled"),
-                    "watch_port": i["watch_port"], "config": i["config"]})
+                    "watch_port": i["watch_port"]})
     return out
 
 
@@ -585,8 +461,8 @@ DEVICE_KEYS = ("wled", "mic", "speaker", "camera_id", "camera_source", "usb_came
 
 
 def add_jim(name, wled, copy_from=None, personality="jim"):
-    """A new Jim: his own settings file (a copy of another Jim's, without that Jim's devices), recordings folder and
-    viewer port. He starts blind, with the LED controller's mic and the default speaker, until you pick his devices."""
+    """A new Jim: his own section of config.toml (another Jim's reply and timing settings, none of that Jim's devices),
+    recordings folder and viewer port. He starts blind, with the LED controller's mic and the default speaker."""
     name = str(name or "").strip()[:30] or "Jim 2"
     if not re.fullmatch(r"[\w.-]+", wled or ""):
         raise ValueError("enter his LED controller's IP address")
@@ -594,17 +470,14 @@ def add_jim(name, wled, copy_from=None, personality="jim"):
     if any(load_config(i).get("wled") == wled for i in ins):
         raise ValueError("another Jim already drives that LED controller")
     new = {"id": new_id(name, {i["id"] for i in ins}), "name": name, "watch_port": max(i["watch_port"] for i in ins) + 1}
-    new["config"] = f"jims/{new['id']}.toml"
-    path = HERE / new["config"]
-    path.parent.mkdir(exist_ok=True)
-    src = next((i for i in ins if i["id"] == copy_from), None)
-    path.write_text(config_path(src).read_text() if src else "# Settings for this Jim (the control panel edits this file)\n")
     persona = P.PERSONALITIES.get(personality) or P.PERSONALITIES["jim"]
-    with as_jim(new):
-        write_settings({"wled": wled, "mic": "wled", "speaker": "default", "camera_id": "", "camera_source": "none",
-                        "record_dir": f"recordings-{new['id']}", "personality": personality if personality in P.PERSONALITIES else "jim",
-                        "voice_design": persona["voice"], "gentle_voice_design": persona["gentle_voice"]})
-    write_private(INSTANCES_FILE, ins + [new])
+    src = load_config(next((i for i in ins if i["id"] == copy_from), None)) if copy_from else {}
+    settings = {k: v for k, v in src.items() if k not in ("wled", "mic", "speaker", "camera_id", "camera_source", "usb_camera",
+                                                           "name", "watch_port", "record_dir", "min_rms", "level_mode")}
+    settings.update(name=name, watch_port=new["watch_port"], wled=wled, mic="wled", speaker="default", camera_id="",
+                    record_dir=f"recordings-{new['id']}", personality=personality if personality in P.PERSONALITIES else "jim",
+                    voice_design=persona["voice"], gentle_voice_design=persona["gentle_voice"])
+    J.update(lambda cfg: cfg["jims"].__setitem__(new["id"], settings))
     return new
 
 
@@ -617,10 +490,7 @@ def remove_jim(jid):
         raise ValueError("the last Jim can't be removed")
     cur_jim(i).stop()
     JIMS.pop(jid, None)
-    cfg = config_path(i)
-    if cfg.exists() and cfg.name != "jim.toml":
-        cfg.rename(cfg.with_suffix(".toml.removed"))          # kept, in case
-    write_private(INSTANCES_FILE, [x for x in ins if x["id"] != jid])
+    J.update(lambda cfg: cfg["jims"].pop(jid, None))
 
 
 def shared_with(key, value):
@@ -661,7 +531,7 @@ def devices():
             models = sorted((m["name"].removesuffix(":latest"), f"{m['size'] / 2**30:.1f} GB") for m in json.loads(r.read())["models"])
     except Exception:
         pass
-    cam_mics = [(f"camera:{c['id']}", f"{c['name']}'s microphone (over the network)") for c in read_private(CAMERAS_FILE, [])
+    cam_mics = [(f"camera:{c['id']}", f"{c['name']}'s microphone (over the network)") for c in cameras()
                 if c.get("kind") == "rtsp" and CAM_AUDIO.get(c["id"])]
     return {"mics": [("wled", "the LED controller's mic (patched firmware)")] + alsa_devices("arecord") + cam_mics,
             "speakers": [("default", "system default")] + alsa_devices("aplay"), "cameras": cams, "models": models}
@@ -672,7 +542,7 @@ CAM_AUDIO = {}                                   # saved camera id -> does its s
 
 def probe_camera_audio(cams=None):
     """Which saved security cameras have a microphone (an audio track in their stream)."""
-    for c in cams if cams is not None else read_private(CAMERAS_FILE, []):
+    for c in cams if cams is not None else cameras():
         if c.get("kind") != "rtsp":
             continue
         try:
@@ -761,9 +631,8 @@ class Jim:
         for l in out.splitlines():
             if not re.search(r"python\S* (-u )?pumpkin\.py", l) or int(l.split()[0]) in mine:
                 continue
-            m = re.search(r"--config\s+(\S+)", l)
-            cfg = Path(m.group(1)) if m else HERE / "jim.toml"
-            if (cfg if cfg.is_absolute() else HERE / cfg).resolve() == config_path(self.inst).resolve():
+            m = re.search(r"--jim-id\s+(\S+)", l)
+            if (m.group(1) if m else instances()[0]["id"]) == self.inst["id"]:
                 found.append(int(l.split()[0]))
         return found
 
@@ -775,7 +644,7 @@ class Jim:
                 raise ValueError(f"another copy of Jim is running (pid {', '.join(map(str, self.others()))}): stop it first")
             self.log.clear()
             self.log.append(f"--- starting {self.inst['name']} at {time.strftime('%H:%M:%S')}")
-            self.proc = subprocess.Popen([str(PYTHON), "-u", "pumpkin.py", "--config", str(config_path(self.inst)), "--name", self.inst["name"],
+            self.proc = subprocess.Popen([str(PYTHON), "-u", "pumpkin.py", "--config", str(J.CONFIG), "--name", self.inst["name"],
                                           "--jim-id", self.inst["id"],
                                           "--watch-port", str(self.inst["watch_port"])], cwd=HERE,
                                          stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -867,14 +736,15 @@ def jim_checks():
     cfg = load_config()
     checks = {}
     source = cfg.get("camera_source", "auto")
-    cam = next((c for c in read_private(CAMERAS_FILE, []) if c["id"] == cfg.get("camera_id")), None)
+    cam = next((c for c in cameras() if c["id"] == cfg.get("camera_id")), None)
+    source = cam["kind"] if cam else "none"
     if cam:
         source = cam["kind"]
     if source == "usb":
         dev = cam["device"] if cam else cfg.get("usb_camera", "/dev/video0")
         checks["Camera"] = lambda: f"USB webcam {dev}" if os.path.exists(dev) else fail(f"{dev} missing")
     elif source != "none":
-        ip = cam["ip"] if cam else camera_settings()["ip"]
+        ip = cam["ip"] if cam else ""
 
         def rtsp_check():
             if not ip:
@@ -1042,10 +912,7 @@ class Panel(BaseHTTPRequestHandler):
         if path == "/api/status":
             return self.send(200, cur_jim().status())
         if path == "/api/layout":
-            try:
-                return self.send(200, {"layout": json.loads(LAYOUT_FILE.read_text())})
-            except (OSError, ValueError):
-                return self.send(200, {"layout": None})
+            return self.send(200, {"layout": J.load()["panel"].get("layout")})
         if path == "/api/network":
             return self.send(200, {"every_s": NET_EVERY_S, "checks": NET})
         if path == "/api/settings":
@@ -1053,7 +920,7 @@ class Panel(BaseHTTPRequestHandler):
             tabs = {tab: [{"title": t, "fields": [dict(opts[k], name=k, value=cfg.get(k, opts[k]["default"]), long=k in LONG, pick=PICK.get(k),
                                                        slider=dict(zip(("base", "step", "auto"), SLIDERS[k])) if k in SLIDERS else None)
                                                   for k in keys if k in opts]} for t, keys in groups] for tab, groups in GROUPS.items()}
-            return self.send(200, {"tabs": tabs, "camera": camera_settings()})
+            return self.send(200, {"tabs": tabs})
         if path == "/api/camera/stream":
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             c = next((c for c in cameras() if c["id"] == q.get("cam", [""])[0]), None)
@@ -1128,8 +995,8 @@ class Panel(BaseHTTPRequestHandler):
                 if not isinstance(b, list) or not all(isinstance(x, dict) and re.fullmatch(r"\w+", str(x.get("id", ""))) for x in b):
                     raise ValueError("not a layout")
                 keep = ("id", "x", "y", "w", "h", "hidden")
-                LAYOUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-                LAYOUT_FILE.write_text(json.dumps([{k: x[k] for k in keep if k in x} for x in b]))
+                layout = [{k: x[k] for k in keep if k in x and x[k] is not None} for x in b]
+                J.update(lambda cfg: cfg["panel"].__setitem__("layout", layout))
                 return self.send(200, {"ok": True})
             if path == "/api/mic/level":
                 v = int(max(20, min(30000, float(b["min_rms"]))))
@@ -1137,7 +1004,7 @@ class Panel(BaseHTTPRequestHandler):
                 for m in ms:
                     if m["id"] == mid:
                         m["min_rms"], m["level_mode"] = v, "fixed"
-                write_private(MICS_FILE, ms)
+                save_list("mics", ms)
                 write_settings({"min_rms": v, "level_mode": "fixed"})
                 live = jim_post("/min_rms", {"min_rms": v, "fixed": True})
                 return self.send(200, {"ok": True, "min_rms": v, "live": live})
@@ -1169,10 +1036,6 @@ class Panel(BaseHTTPRequestHandler):
                 if set(vals) <= live_keys:
                     return self.send(200, {"ok": True, "restart": False, "live": reload_jim()})
                 return self.send(200, {"ok": True, "restart": cur_jim().running()})
-            if path == "/api/camera":
-                save_camera(b.get("ip", "").strip(), b.get("user", "").strip(), b.get("path", "").strip().lstrip("/"),
-                            b.get("password") or None)
-                return self.send(200, {"ok": True, "camera": camera_settings(), "restart": cur_jim().running()})
             if path == "/api/cameras":
                 return self.send(200, {"camera": public_camera(save_camera_profile(b)), "restart": False})
             m = re.fullmatch(r"/api/cameras/([\w-]+)/channels", path)
@@ -1207,7 +1070,7 @@ class Panel(BaseHTTPRequestHandler):
                 for x in sp:
                     if x["id"] == sid:
                         x["volume"] = v
-                write_private(SPEAKERS_FILE, sp)
+                save_list("speakers", sp)
                 write_settings({"volume": v})
                 return self.send(200, {"ok": True, "volume": v, "live": jim_post("/volume", {"volume": v})})
             m = re.fullmatch(r"/api/mics/([\w-]+)/use", path)
@@ -1215,10 +1078,6 @@ class Panel(BaseHTTPRequestHandler):
                 mm = next((x for x in mics() if x["id"] == m.group(1)), {})
                 warn = shared_with("mic", mm.get("mic"))
                 live = use_mic(m.group(1)); return self.send(200, {"ok": True, "live": live, "restart": False, "shared": warn})
-            if path == "/api/camera/test":
-                cfg = load_config()
-                source = b.get("source") or cfg.get("camera_source", "auto")
-                return self.send(200, grab_frame("usb" if source == "usb" else "rtsp", b.get("usb_camera") or cfg.get("usb_camera", "/dev/video0")), "image/jpeg")
             if path == "/api/mic/test":
                 return self.send(200, mic_test(b.get("device") or load_config().get("mic", "wled")))
             if path == "/api/voice/preview":
@@ -1242,9 +1101,9 @@ class Panel(BaseHTTPRequestHandler):
                 return self.send(400, {"error": str(e)})
         m = re.fullmatch(r"/api/(cameras|mics|speakers)/([\w-]+)", path)
         if m:
-            f, items = {"cameras": (CAMERAS_FILE, cameras), "mics": (MICS_FILE, mics), "speakers": (SPEAKERS_FILE, speakers)}[m.group(1)]
-            items = items()
-            write_private(f, [x for x in items if x["id"] != m.group(2)])
+            kind = m.group(1)
+            items = [x for x in {"cameras": cameras, "mics": mics, "speakers": speakers}[kind]() if x["id"] != m.group(2)]
+            save_cameras(items) if kind == "cameras" else save_list(kind, items)
             return self.send(200, {"ok": True})
         if path == "/api/recordings":
             for d in record_dir().glob("*/visit.json"):
@@ -1269,6 +1128,8 @@ if __name__ == "__main__":
 
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(sig, bye)
+    if J.migrate(HERE):
+        print(f"Moved the old settings into {J.CONFIG} (camera passwords: {J.SECRETS})")
     threading.Thread(target=network_loop, daemon=True).start()
     threading.Thread(target=probe_camera_audio, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", A.port), Panel)

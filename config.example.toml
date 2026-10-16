@@ -1,0 +1,54 @@
+# Jim-o-Lantern's settings live in ~/.config/jim/config.toml (this file shows the layout). Camera passwords go in
+# ~/.config/jim/secrets.toml, which only you can read. The control panel (./panel.sh) writes both; editing by hand is
+# fine. Any command-line option can be a setting: its name with underscores (--min-rms 800 -> min_rms = 800).
+
+# One section per pumpkin. The first one is the lead (he greets and answers kids when there are two).
+[jims.jim]
+name = "Jim"
+personality = "jim"              # jim = furious and grumpy; chris = fabulous and flamboyant
+watch_port = 8780                # his viewer (the control panel reads it)
+wled = "192.168.1.50"            # his LED controller
+camera_id = "driveway"           # a camera below
+mic = "plughw:CARD=Camera,DEV=0" # an ALSA device (arecord -L), "wled" (the controller's mic) or "camera:<camera id>"
+min_rms = 300                    # how loud a sound must be for him to react
+level_mode = "fixed"             # fixed, or auto (also rises with the room's background noise)
+speaker = "default"              # an ALSA device (aplay -L)
+volume = 1.0
+# house = "Two pieces of candy each!"
+# record = true                  # save visits for playback in the control panel
+# keep_loaded = true             # keep the models warm while he runs
+
+# [jims.chris]
+# name = "Chris"
+# personality = "chris"
+# watch_port = 8781
+# wled = "192.168.1.51"
+
+# Saved cameras: a security camera (RTSP; its password is in secrets.toml under the same id) or a USB webcam.
+[cameras.driveway]
+name = "Driveway"
+kind = "rtsp"
+ip = "192.168.1.60"
+user = "admin"
+path = "h264Preview_01_main"     # Reolink; on an NVR, channel 2 is h264Preview_02_main, and so on
+
+[cameras.webcam]
+name = "USB webcam"
+kind = "usb"
+device = "/dev/video0"
+
+# Saved mics and speakers (the control panel's Audio tab): "Use" copies them into a Jim's section.
+[mics.webcam-mic]
+name = "Webcam mic"
+mic = "plughw:CARD=Camera,DEV=0"
+min_rms = 300
+level_mode = "fixed"
+
+[speakers.porch]
+name = "Porch speaker"
+speaker = "plughw:CARD=S3,DEV=0"
+volume = 1.0
+
+# secrets.toml (mode 600):
+# [cameras.driveway]
+# password = "..."
