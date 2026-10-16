@@ -5,7 +5,11 @@
 :root{--bg:#111217;--card:#181b1f;--ink:#ccccdc;--mute:#8e8e9a;--line:#2c3235;--accent:#3d71d9;--orange:#ff9830;--ok:#73bf69;--bad:#f2495c;--chip:#22252b;color-scheme:dark}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
 header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 16px;border-bottom:1px solid var(--line);background:var(--card);position:sticky;top:0;z-index:5}
-header h1{font-size:18px;margin:0;margin-right:auto}
+header h1{font-size:18px;margin:0}
+.jims{display:flex;gap:6px;flex-wrap:wrap}.jimpill{display:flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--chip);color:var(--ink);border-radius:4px;padding:5px 10px;cursor:pointer;font:inherit;font-size:13px}
+.jimpill.on{border-color:var(--orange);box-shadow:inset 0 -2px 0 var(--orange);font-weight:600}.jimpill .st{font-size:11px;color:var(--mute);font-weight:400}
+.dotj{width:8px;height:8px;border-radius:50%;background:#555}.dotj.run{background:var(--ok)}.dotj.awake{background:var(--orange)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:20;padding:16px}.modal .card{width:100%;max-width:420px;margin:0}
 .pill{border-radius:99px;padding:3px 10px;font-size:13px;font-weight:600;background:var(--chip);color:var(--mute)}.pill.on{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
 .pill.warn{background:color-mix(in srgb,var(--bad) 15%,transparent);color:var(--bad)}
 nav{display:flex;gap:4px;overflow-x:auto;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--card)}
@@ -98,7 +102,8 @@ table.dtab td{padding:6px;border-bottom:1px solid #22252b;font-variant-numeric:t
 .up,.down{font-weight:600;border-radius:3px;padding:1px 6px;font-size:11px}.up{background:rgba(115,191,105,.18);color:var(--g-green)}.down{background:rgba(242,73,92,.18);color:var(--g-red)}
 @media (max-width:560px){.entry{grid-template-columns:1fr}}
 </style></head><body>
-<header><h1>🎃 Jim</h1><span id="pill" class="pill">…</span>
+<header><h1>🎃</h1><div class="jims" id="jims"></div><button class="b sm" id="jimAdd" title="add another Jim">＋ Jim</button>
+<span style="margin-left:auto"></span><span id="pill" class="pill">…</span>
 <button class="b go" id="startBtn">Start</button><button class="b" id="restartBtn">Restart</button><button class="b" id="stopBtn">Stop</button>
 <button class="b" id="snoozeBtn" title="dark and deaf for a while: time to leave">Snooze</button></header>
 <nav id="nav"></nav>
@@ -208,12 +213,20 @@ table.dtab td{padding:6px;border-bottom:1px solid #22252b;font-variant-numeric:t
  <div class="card"><h2>Visits</h2><div id="visits" class="thumbs muted">—</div></div><div class="card" id="visitCard" style="display:none"><h2 id="visitTitle"></h2><div id="visit"></div></div>
 </section>
 </main>
+<div class="modal" id="addJim"><div class="card"><h2>Add a Jim</h2>
+ <div class="field"><label>Name</label><input type="text" id="ajName" placeholder="Jim 2"></div>
+ <div class="field"><label>His LED controller's IP address</label><input type="text" id="ajWled" placeholder="10.0.1.160"><div class="help">Each Jim needs his own LED curtain and controller.</div></div>
+ <div class="field"><label><input type="checkbox" id="ajCopy" checked> Copy the voice, personality and timing of <span id="ajFrom"></span></label>
+  <div class="help">He starts blind, with his LED controller's mic and the default speaker: pick his camera, mic and speaker on the Camera and Audio tabs.</div></div>
+ <div class="row"><button class="b go" id="ajCreate">Add</button><button class="b" id="ajCancel">Cancel</button><span style="flex:1"></span><button class="b" id="jimRemove">Remove the selected Jim…</button></div></div></div>
 <div class="toast" id="toast"><span id="toastText"></span><button class="b" id="toastBtn" style="display:none">Restart Jim</button></div>
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"})[c]);
+let JIM = null; try { JIM = localStorage.getItem("jimId") } catch (e) {}
+const u = path => JIM ? path + (path.includes("?") ? "&" : "?") + "jim=" + encodeURIComponent(JIM) : path;   // this Jim's URL
 async function api(path, opts = {}) {
-  const r = await fetch(path, {...opts, headers: {"X-Jim-Panel": "1", "Content-Type": "application/json", ...(opts.headers || {})}});
+  const r = await fetch(u(path), {...opts, headers: {"X-Jim-Panel": "1", "Content-Type": "application/json", ...(opts.headers || {})}});
   if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m } catch (e) {} throw new Error(m) }
   return r;
 }
@@ -224,6 +237,41 @@ function toast(text, restart) {
   $("toast").style.display = "flex"; clearTimeout(toastTimer); toastTimer = setTimeout(() => $("toast").style.display = "none", restart ? 9000 : 4000);
 }
 $("toastBtn").onclick = () => control("restart");
+
+// ---- which Jim (more than one can run; every tab shows the selected one)
+let JIMLIST = [];
+async function loadJims() {
+  try { JIMLIST = (await (await fetch("/api/jims", {headers: {"X-Jim-Panel": "1"}})).json()).jims } catch (e) { return }
+  if (!JIMLIST.some(j => j.id === JIM)) { JIM = JIMLIST[0]?.id || null }
+  $("jims").innerHTML = JIMLIST.map(j => { const awake = j.state && !j.state.startsWith("dark");
+    return `<button class="jimpill ${j.id === JIM ? "on" : ""}" data-jim="${esc(j.id)}" title="${esc(j.wled ? "LED controller " + j.wled : "")}">
+      <span class="dotj ${j.running ? (awake ? "awake" : "run") : ""}"></span>${esc(j.name)}<span class="st">${j.running ? esc((j.state || "").split(" / ")[0]) : "off"}</span></button>` }).join("");
+  document.title = (JIMLIST.find(j => j.id === JIM)?.name || "Jim") + " · control panel";
+}
+$("jims").onclick = e => { const b = e.target.closest("[data-jim]"); if (b && b.dataset.jim !== JIM) selectJim(b.dataset.jim) };
+async function selectJim(id) {
+  JIM = id; try { localStorage.setItem("jimId", id) } catch (e) {}
+  lastJim = null; judgedAt = 0; liveKey = undefined; for (const k in live) live[k] = [];
+  $("judged").removeAttribute("src"); $("events").innerHTML = ""; $("console").textContent = "";
+  await loadJims(); await loadSettings(); loadCams(true); loadMics(); loadSpeakers();
+  if ($("tab-recordings").classList.contains("on")) loadVisits();
+  pollLive(); updateLive();
+}
+$("jimAdd").onclick = () => { $("ajFrom").textContent = JIMLIST.find(j => j.id === JIM)?.name || "this Jim"; $("jimRemove").style.display = JIMLIST.length > 1 ? "" : "none"; $("addJim").style.display = "flex"; $("ajName").focus() };
+$("ajCancel").onclick = () => { $("addJim").style.display = "none" };
+$("ajCreate").onclick = async () => {
+  try {
+    const d = await (await post("/api/jims", {name: $("ajName").value, wled: $("ajWled").value, copy_from: $("ajCopy").checked ? JIM : null})).json();
+    $("addJim").style.display = "none"; $("ajName").value = ""; $("ajWled").value = "";
+    await selectJim(d.jim.id); toast(`${d.jim.name} added. Pick his camera, mic and speaker, then press Start.`);
+  } catch (e) { toast("Not added: " + e.message) }
+};
+$("jimRemove").onclick = async () => {
+  const j = JIMLIST.find(x => x.id === JIM); if (!j || !confirm(`Remove ${j.name}? He stops, and his settings file is set aside (not deleted).`)) return;
+  try { await api("/api/jims/" + encodeURIComponent(j.id), {method: "DELETE"}); $("addJim").style.display = "none"; JIM = null; await selectJim(null); toast(`${j.name} removed.`) }
+  catch (e) { toast(e.message) }
+};
+setInterval(loadJims, 3000);
 
 // ---- tabs
 const TABS = [["live", "Live"], ["camera", "Camera"], ["mic", "Audio"], ["voice", "Voice"], ["responses", "Replies"], ["recordings", "Recordings"]];
@@ -393,7 +441,7 @@ async function pollLive() {
     lastJim = d; sample(d); paintDash();
     $("stateText").textContent = d.state + (d.snooze_left ? ` · snoozing ${d.snooze_left} s` : "") + (d.recording ? " · recording" : "");
     if (d.mic) meter("lvl2", "thr2", "lvlText2", d.mic);
-    if (d.judged_at && d.judged_at !== judgedAt) { judgedAt = d.judged_at; $("judged").src = "/jim/judged.jpg?" + judgedAt }
+    if (d.judged_at && d.judged_at !== judgedAt) { judgedAt = d.judged_at; $("judged").src = u("/jim/judged.jpg?" + judgedAt) }
     const v = d.verdict;
     $("verdict").className = "verdict " + (v ? (v.error ? "err" : v.visible ? "yes" : "no") : "");
     $("verdict").textContent = v ? (v.error ? "⚠ " + v.error : (v.visible ? "Sees trick-or-treaters" : "Sees nobody") + (v.seconds != null ? ` · ${v.seconds} s` : "")) : judgedAt ? "" : "Nothing judged yet: wake Jim up.";
@@ -402,7 +450,7 @@ async function pollLive() {
 }
 setInterval(pollLive, 1000);
 // the Live camera shows the input chosen on the Camera tab (saved or not), as a live stream while the Live tab is open
-let liveKey = null, liveSince = 0;
+let liveKey = undefined, liveSince = 0;
 function liveInput() {
   const c = CAMS.cameras.find(c => c.id === CAMS.active);
   return c ? {source: c.kind, dev: c.id, name: c.name} : null;
@@ -414,8 +462,8 @@ function updateLive() {
   liveKey = key; liveSince = Date.now();
   const img = $("live");
   if (!inp) { img.removeAttribute("src"); $("liveNote").textContent = on ? "No camera in use (Camera tab)." : ""; return }
-  img.onerror = () => { img.removeAttribute("src"); $("liveNote").textContent = `⚠ No picture from ${inp.name}.`; setTimeout(() => { liveKey = null }, 5000) };
-  img.src = `/api/camera/stream?cam=${encodeURIComponent(inp.dev)}&t=${Date.now()}`;
+  img.onerror = () => { img.removeAttribute("src"); $("liveNote").textContent = `⚠ No picture from ${inp.name}.`; setTimeout(() => { liveKey = undefined }, 5000) };
+  img.src = u(`/api/camera/stream?cam=${encodeURIComponent(inp.dev)}&t=${Date.now()}`);
   paintLiveNote();
 }
 function paintLiveNote() {
@@ -486,7 +534,7 @@ function paintDash() {
   $("pipeLegend").innerHTML = total ? parts.map(p => `<span><i style="background:${p.color}"></i>${p.name} <b style="color:#ccccdc">${fmtS(p.v)}</b></span>`).join("")
     + `<span>= <b style="color:#ccccdc">${fmtS(total)}</b></span>` : `<span>Talk to Jim to measure this.</span>`;
   stat("fps", cam ? cam.fps : null, cam ? cam.fps.toFixed(1) : "—", live.fps);
-  const led = net["LED controller"]?.extra || {};
+  const me = JIMLIST.find(j => j.id === JIM)?.name, led = (net[`LED controller · ${me}`] || net["LED controller"])?.extra || {};
   stat("wifi", led.wifi ?? null, led.wifi != null ? led.wifi + "%" : "—");
   const n = Math.max(0, ...["hear", "think", "first_word"].map(k => (m[k] || []).length));
   chart($("chResp"), [["e2e", "end to end", G.red], ["first_word", "first word", G.green], ["think", "thinking", G.yellow], ["hear", "hearing", G.blue]]
@@ -639,7 +687,7 @@ loadLayout();
 let CAMS = {cameras: [], active: null, devices: []}, editingCam = null;
 async function loadCams(snaps) {
   try { CAMS = await (await api("/api/cameras")).json() } catch (e) { return }
-  paintCams(snaps); liveKey = null; updateLive();
+  paintCams(snaps); liveKey = undefined; updateLive();
 }
 function liveSelects() {
   $("liveCamSel").innerHTML = CAMS.cameras.map(c => `<option value="${esc(c.id)}" ${c.id === CAMS.active ? "selected" : ""}>${esc(c.name)}</option>`).join("")
@@ -654,7 +702,9 @@ async function useFromLive(kind, id) {
   try {
     const d = await (await post(`/api/${kind}/${encodeURIComponent(id)}/use`)).json();
     await ({cameras: () => loadCams(false), mics: loadMics, speakers: loadSpeakers}[kind])();
-    toast(d.live ? `Jim is now ${{cameras: "looking through", mics: "listening with", speakers: "talking through"}[kind]} ${item.name}.` : `${item.name} is in use (from Jim's next start).`);
+    const who = JIMLIST.find(j => j.id === JIM)?.name || "Jim";
+    toast((d.live ? `${who} is now ${{cameras: "looking through", mics: "listening with", speakers: "talking through"}[kind]} ${item.name}.` : `${item.name} is ${who}'s (from his next start).`)
+      + (d.shared?.length ? ` ⚠ ${d.shared.join(", ")} also uses it, and two Jims can't share it.` : ""));
   } catch (e) { toast(e.message); liveSelects() }
 }
 $("liveCamSel").onchange = e => useFromLive("cameras", e.target.value);
@@ -676,7 +726,7 @@ function snap(id) {
   const note = img.nextElementSibling; note.textContent = "Getting a picture…";
   img.onload = () => { note.textContent = "" };
   img.onerror = () => { img.removeAttribute("src"); note.textContent = "⚠ No picture (unplugged, busy, or wrong password?)" };
-  img.src = `/api/cameras/${encodeURIComponent(id)}/snapshot?t=${Date.now()}`;
+  img.src = u(`/api/cameras/${encodeURIComponent(id)}/snapshot?t=${Date.now()}`);
 }
 function camForm(c) {
   editingCam = c ? c.id : null; $("camForm").style.display = "";
@@ -716,7 +766,7 @@ function camLive(c) {
   $("camTestNote").textContent = `Connecting to ${c.name}…`;
   img.onload = () => { $("camTestNote").textContent = `${c.name}: live.` };
   img.onerror = () => { img.removeAttribute("src"); $("camTestNote").textContent = `⚠ No picture from ${c.name}.` };
-  img.src = `/api/camera/stream?cam=${encodeURIComponent(c.id)}&t=${Date.now()}`;
+  img.src = u(`/api/camera/stream?cam=${encodeURIComponent(c.id)}&t=${Date.now()}`);
 }
 function camStop() { $("camTest").onerror = null; $("camTest").removeAttribute("src"); $("camTestNote").textContent = "Stopped." }
 $("camStop").onclick = camStop;
@@ -851,7 +901,7 @@ async function loadVisits() {
       return t.toLocaleDateString(undefined, {weekday: "short", month: "short", day: "numeric"}) + " · " + t.toLocaleTimeString(undefined, {hour: "numeric", minute: "2-digit"}) };
     $("visits").classList.toggle("muted", !d.visits.length);
     $("visits").innerHTML = d.visits.length ? d.visits.map(v => `<div class="vcard" data-visit="${v.id}">
-        ${v.frame ? `<img src="/rec/${v.id}/${v.frame}" alt="" loading="lazy">` : `<img alt="">`}
+        ${v.frame ? `<img src="${u(`/rec/${v.id}/${v.frame}`)}" alt="" loading="lazy">` : `<img alt="">`}
         <div class="vb"><div class="when">${esc(when(v.id))}</div>
          <div class="seen">${esc(v.seen || v.first || "—")}</div>
          <div class="sub" style="margin-top:4px">${v.turns} ${v.turns === 1 ? "reply" : "replies"}${v.roasted ? " · costume roast" : ""}</div></div></div>`).join("")
@@ -862,17 +912,17 @@ document.addEventListener("click", async e => {
   const el = e.target.closest?.("[data-visit]"); if (!el) return;
   const id = el.dataset.visit, v = await (await api("/api/recordings/" + id)).json();
   $("visitCard").style.display = ""; $("visitTitle").innerHTML = `Visit ${esc(id)} <button class="b" id="delVisit" style="float:right">Delete</button>`;
-  $("visit").innerHTML = v.entries.map(x => `<div class="entry"><div>${x.frame ? `<img src="/rec/${id}/${x.frame}" alt="">` : ""}</div><div>
+  $("visit").innerHTML = v.entries.map(x => `<div class="entry"><div>${x.frame ? `<img src="${u(`/rec/${id}/${x.frame}`)}" alt="">` : ""}</div><div>
     <div class="kind">${esc(x.kind)} · <span class="t">${esc(x.time)}</span>${x.seconds != null ? ` <span class="t">${x.seconds} s</span>` : ""}${x.gentle ? ` <span class="t">gentle</span>` : ""}</div>
-    ${x.kind === "turn" ? `<div>🧒 ${esc(x.text)}</div>${x.kid ? `<audio controls preload="none" src="/rec/${id}/${x.kid}"></audio>` : ""}<div style="margin-top:6px">🎃 ${esc(x.reply)}</div>`
+    ${x.kind === "turn" ? `<div>🧒 ${esc(x.text)}</div>${x.kid ? `<audio controls preload="none" src="${u(`/rec/${id}/${x.kid}`)}"></audio>` : ""}<div style="margin-top:6px">🎃 ${esc(x.reply)}</div>`
       : `<div>🎃 ${esc(x.text)}</div>${x.verdict ? `<div class="muted">${x.verdict.error ? "⚠ " + esc(x.verdict.error) : x.verdict.visible ? "saw trick-or-treaters" : "saw nobody"}</div>` : ""}`}
-    ${x.jim ? `<audio controls preload="none" src="/rec/${id}/${x.jim}"></audio>` : ""}</div></div>`).join("");
+    ${x.jim ? `<audio controls preload="none" src="${u(`/rec/${id}/${x.jim}`)}"></audio>` : ""}</div></div>`).join("");
   $("delVisit").onclick = async () => { if (!confirm("Delete this visit?")) return; await api("/api/recordings/" + id, {method: "DELETE"}); $("visitCard").style.display = "none"; loadVisits() };
   $("visitCard").scrollIntoView({behavior: "smooth"});
 });
 $("recDelAll").onclick = async () => { if (!confirm("Delete every recorded visit?")) return; await api("/api/recordings", {method: "DELETE"}); $("visitCard").style.display = "none"; loadVisits(); toast("All recordings deleted.") };
 
 let first = "live"; try { first = localStorage.getItem("jimTab") || "live" } catch (e) {}
-loadSettings().then(() => show(TABS.some(([k]) => k === first) ? first : "live")).catch(e => toast("Couldn't load settings: " + e.message));
+loadJims().then(loadSettings).then(() => show(TABS.some(([k]) => k === first) ? first : "live")).catch(e => toast("Couldn't load settings: " + e.message));
 pollLive();
 </script></body></html>

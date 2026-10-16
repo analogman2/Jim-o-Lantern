@@ -42,6 +42,7 @@ mic ─▶ energy VAD (Mic) ─▶ Whisper ─▶ Ollama LLM (Jim) ─▶ Qwen3-
   - **Fallback:** local `tts_server.py` in `.venv-qwentts`, and in-process Whisper.
 - **Brain:** Ollama `qwen3.5:9b` (it has vision). `--brain claude` is optional.
 - **Control panel:** `./panel.sh` → http://127.0.0.1:8790 (`jim_panel.py` + `panel.html`): runs Jim as a child process, edits `jim.toml`, camera/mic tests, voice preview, recordings. Forms come from `pumpkin.build_parser()` grouped in `GROUPS`.
+- **Several Jims:** `~/.config/jim/instances.json` lists them (id, name, config file, viewer port 8780, 8781, …). `pumpkin.py --config <file> --name <name>`; the panel scopes every request with `?jim=<id>`. Cameras are chosen by saved id (`camera_id`).
 - **Start:** `./start.sh` (settings from `jim.toml`).
   `--keep-loaded` keeps the models warm only while Jim runs. The 12 greetings are
   cached in `cache/greetings/`.

@@ -121,7 +121,14 @@ stopping the panel stops Jim) and has tabs for:
   replies (as played). Recordings hold children's voices and pictures: they stay in `recordings/` (never
   committed) and are deleted after `record_keep_days` (7 by default).
 
-Settings are saved to `jim.toml` (your comments are kept); restart Jim to apply them. The panel itself answers only on
+**More than one Jim:** press **＋ Jim** in the panel's header to add another pumpkin with his own LED controller.
+Each Jim has his own settings file (`jim.toml` for the first, `jims/<id>.toml` for the others), camera, mic, speaker,
+recordings folder and metrics; the header shows each one's state, and every tab shows the selected Jim. Saved cameras,
+mics and speakers are shared, but a USB mic, webcam or speaker can only serve one Jim at a time (the panel warns).
+They share one loaded copy of the chat model.
+
+Camera, mic and speaker changes apply while Jim runs; voice and personality changes need a restart.
+Settings are saved to the selected Jim's file (your comments are kept). The panel itself answers only on
 this PC. To keep it running in the background, install `systemd/jim-panel.service` as a user service. On jt's machine,
 Agentora's sign-in gate (`jim-gate`, Studio admins only) and Tailscale relay make it reachable from other devices at
 `https://<machine>.<tailnet>.ts.net:7885/`.

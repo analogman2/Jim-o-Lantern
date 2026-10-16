@@ -251,6 +251,21 @@ def alsa_source(device):
 CAMERAS_FILE = os.path.expanduser("~/.config/jim/cameras.json")   # saved cameras (control panel), with passwords
 
 
+def saved_camera_url(cam_id):
+    """A camera saved in the control panel: its RTSP address (with the password) or its USB device; None if unknown."""
+    import urllib.parse
+    try:
+        with open(CAMERAS_FILE) as f:
+            c = next(c for c in json.load(f) if c.get("id") == cam_id)
+    except (OSError, ValueError, StopIteration):
+        print(f"[camera] no saved camera '{cam_id}' (control panel: Camera tab): Jim is blind", file=sys.stderr)
+        return None
+    if c.get("kind") == "usb":
+        return c.get("device")
+    q = lambda v: urllib.parse.quote(v, safe="")
+    return f"rtsp://{q(c['user'])}:{q(c['password'])}@{c['ip']}:554/{c['path']}"
+
+
 def camera_audio_url(cam_id):
     """The RTSP address of a saved security camera, for its built-in microphone (mic = "camera:<id>")."""
     import urllib.parse
@@ -289,52 +304,62 @@ def rtsp_audio_source(url, name):
     return MIC_RATE, gen()
 
 
+WLED_MIC_RATE = 22050                                 # what the patched firmware streams (see README)
+
+
 def wled_source(host, gain=16):
     """Yield int16 sample blocks streamed by the patched WLED firmware.
     We send a "PMIC" subscribe packet every second; WLED streams to us while
-    those keep arriving. Returns (rate, generator)."""
+    those keep arriving. Returns (rate, generator). Never blocks: until the controller answers, Jim simply hears
+    nothing (a second Jim's controller may not have the patched firmware yet)."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("", 0))
     sock.settimeout(0.5)
+    stop = threading.Event()
 
     def subscribe():
-        while True:
-            sock.sendto(b"PMIC" + bytes([gain]), (host, WLED_MIC_PORT))
+        while not stop.is_set():
+            try:
+                sock.sendto(b"PMIC" + bytes([gain]), (host, WLED_MIC_PORT))
+            except OSError:
+                pass
             time.sleep(1)
 
     threading.Thread(target=subscribe, daemon=True).start()
-    rate = None
-    while rate is None:  # wait for the first packet to learn the sample rate
-        try:
-            pkt = sock.recv(2048)
-        except socket.timeout:
-            print(f"[mic] waiting for audio from WLED at {host}:{WLED_MIC_PORT} "
-                  "(is the patched firmware installed and AudioReactive enabled?)",
-                  file=sys.stderr)
-            time.sleep(2)
-            continue
-        if pkt[:4] == b"PMA1":
-            rate = int.from_bytes(pkt[8:12], "little")
 
     def gen():
-        last_seq = None
-        while True:
-            try:
-                pkt = sock.recv(2048)
-            except socket.timeout:
-                continue
-            if pkt[:4] != b"PMA1":
-                continue
-            seq = int.from_bytes(pkt[4:8], "little")
-            n = int.from_bytes(pkt[12:14], "little")
-            if last_seq is not None and seq != last_seq + 1:
-                lost = (seq - last_seq - 1) & 0xFFFFFFFF
-                if 0 < lost < 50:
-                    yield np.zeros(n * lost, np.int16)  # keep timing across dropped packets
-            last_seq = seq
-            yield np.frombuffer(pkt[14:14 + 2 * n], np.int16)
+        last_seq, quiet_since, said = None, time.time(), None
+        try:
+            while True:
+                try:
+                    pkt = sock.recv(2048)
+                except socket.timeout:
+                    if said != "waiting" and time.time() - quiet_since > 3:
+                        print(f"[mic] waiting for audio from WLED at {host}:{WLED_MIC_PORT} "
+                              "(is the patched firmware installed and AudioReactive enabled?)", file=sys.stderr, flush=True)
+                        said = "waiting"
+                    continue
+                if pkt[:4] != b"PMA1":
+                    continue
+                quiet_since = time.time()
+                if said != "streaming":
+                    rate = int.from_bytes(pkt[8:12], "little")
+                    print(f"[mic] audio from WLED at {host}" + (f" (at {rate} Hz, expected {WLED_MIC_RATE})" if rate != WLED_MIC_RATE else ""),
+                          file=sys.stderr, flush=True)
+                    said = "streaming"
+                seq = int.from_bytes(pkt[4:8], "little")
+                n = int.from_bytes(pkt[12:14], "little")
+                if last_seq is not None and seq != last_seq + 1:
+                    lost = (seq - last_seq - 1) & 0xFFFFFFFF
+                    if 0 < lost < 50:
+                        yield np.zeros(n * lost, np.int16)  # keep timing across dropped packets
+                last_seq = seq
+                yield np.frombuffer(pkt[14:14 + 2 * n], np.int16)
+        finally:                                     # Jim switched to another mic
+            stop.set()
+            sock.close()
 
-    return rate, gen()
+    return WLED_MIC_RATE, gen()
 
 
 class Mic(threading.Thread):
@@ -1196,6 +1221,10 @@ class OllamaBrain:
         import urllib.request
         if not self.loaded():
             return
+        me = os.getpid()
+        others = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True).stdout.splitlines()
+        if any("pumpkin.py" in l and int(l.split()[0]) != me for l in others):
+            return                                   # another Jim is still running and may be using it
         try:
             req = urllib.request.Request(f"{self.url}/api/generate", json.dumps(
                 {"model": self.model, "keep_alive": 0}).encode(), {"Content-Type": "application/json"})
@@ -1661,6 +1690,8 @@ def load_config(path=CONFIG_FILE):
 def build_parser():
     """Every option (the control panel builds its forms from these too)."""
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--config", default=CONFIG_FILE, help="this Jim's settings file (each Jim has his own)")
+    p.add_argument("--name", default="Jim", help="this Jim's name, for the control panel and logs")
     p.add_argument("--wled", default=None, help="WLED IP address (usually set in jim.toml)")
     p.add_argument("--brightness", type=float, default=0.7, help="0..1 overall LED brightness")
     p.add_argument("--flip-x", action="store_true", help="mirror the face left/right")
@@ -1760,6 +1791,7 @@ def build_parser():
                    help="where Jim looks: rtsp = the security camera (./set_camera.sh), usb = a USB "
                         "webcam (--usb-camera), none = blind; auto = the security camera if one is set up")
     p.add_argument("--usb-camera", default="/dev/video0", help="the USB webcam's device")
+    p.add_argument("--camera-id", default="", help="a camera saved in the control panel (overrides --camera-source)")
     p.add_argument("--record", action="store_true",
                    help="save every visit (camera frames, what kids said and Jim's replies, audio "
                         "and text) to --record-dir for playback in the control panel")
@@ -1776,12 +1808,15 @@ def build_parser():
 def main():
     p = build_parser()
     # jim.toml supplies the defaults; anything on the command line still wins.
-    config = load_config()
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", default=CONFIG_FILE)
+    config_file = pre.parse_known_args()[0].config
+    config = load_config(config_file)
     options = {a.dest for a in p._actions}
     settings = {k: v for k, v in config.items() if not isinstance(v, dict)}
     unknown = sorted(k for k in settings if k not in options)
     if unknown:
-        print(f"[config] jim.toml: ignoring unknown setting(s): {', '.join(unknown)}", file=sys.stderr)
+        print(f"[config] {os.path.basename(config_file)}: ignoring unknown setting(s): {', '.join(unknown)}", file=sys.stderr)
     p.set_defaults(**{k: v for k, v in settings.items() if k in options})
     args = p.parse_args()
     if not args.wled:
@@ -1866,6 +1901,9 @@ def main():
     def camera_choice(a):
         """(url or None, crop) for these settings."""
         src = "none" if a.no_camera else a.camera_source
+        if a.camera_id and not a.no_camera:
+            url = saved_camera_url(a.camera_id)
+            return url, tuple(float(v) for v in a.camera_crop.split(",")) if a.camera_crop else None
         url = a.usb_camera if src == "usb" else camera_url() if src in ("auto", "rtsp") else None
         if src == "rtsp" and not url:
             print("[camera] no security camera saved yet (./set_camera.sh or the control panel): Jim is blind", file=sys.stderr)
@@ -2068,14 +2106,14 @@ def main():
         brain.reset()
         voice.gentle = False
         drain(noises)
-        print("💤 Jim is asleep (dark). Make a noise to wake him.")
+        print(f"💤 {args.name} is asleep (dark). Make a noise to wake him.")
         note("💤 asleep")
         if rec:
             rec.end()
 
     def wake_up():
         mic.mute()
-        print("🔥 Jim wakes up!")
+        print(f"🔥 {args.name} wakes up!")
         # Look at the visitors while the wake-up animation plays, and roast what they're wearing.
         frame, seen = see(), {}
         if frame:
@@ -2155,7 +2193,7 @@ def main():
             """The control panel changed the camera, mic or speaker in jim.toml: switch to them now, no restart."""
             p = build_parser()
             known = {x.dest for x in p._actions}
-            p.set_defaults(**{k: v for k, v in load_config().items() if not isinstance(v, dict) and k in known})
+            p.set_defaults(**{k: v for k, v in load_config(args.config).items() if not isinstance(v, dict) and k in known})
             new = p.parse_args([])               # jim.toml as it is now (the panel only adds the viewer port)
             changed = []
             url, crop = camera_choice(new)
@@ -2188,7 +2226,7 @@ def main():
                                        "age_s": round(time.time() - mic.level_t, 1) if mic.level_t else None,
                                        "muted": mic.muted.is_set()},
                                "speaker": speaker_level(),
-                               "snooze_left": max(0, round(snooze_until[0] - time.time())), "recording": bool(rec),
+                               "snooze_left": max(0, round(snooze_until[0] - time.time())), "recording": bool(rec), "name": args.name,
                                "metrics": {k: list(v) for k, v in metrics.items()}, "camera": camera.stats() if camera.url else None}
     if sys.stdin.isatty():
         threading.Thread(target=keyboard, daemon=True).start()

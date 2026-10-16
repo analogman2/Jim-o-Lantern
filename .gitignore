@@ -29,3 +29,7 @@ jim.toml
 
 # Recorded visits (kids' voices and camera frames): never committed
 recordings/
+
+# Extra Jims: settings set aside when removed, and their recordings
+jims/*.removed
+recordings-*/
