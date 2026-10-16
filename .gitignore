@@ -26,3 +26,6 @@ cache/
 
 # This machine's settings (copy jim.example.toml)
 jim.toml
+
+# Recorded visits (kids' voices and camera frames): never committed
+recordings/

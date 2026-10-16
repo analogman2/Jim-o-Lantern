@@ -21,6 +21,9 @@ ollama_url = "http://localhost:11434"
 ollama_model = "qwen3.5:9b"
 
 # keep_loaded = true      # keep the models warm while Jim runs (all released when he stops)
+# record = true           # save visits for playback in the control panel (./panel.sh)
+# record_keep_days = 7
+# camera_source = "auto"  # auto | rtsp (security camera) | usb (--usb-camera) | none
 # watch_port = 8780       # http://127.0.0.1:8780 shows the camera, what Jim judged, and a log (this PC only)
 # house = "Two pieces of candy each!"
 

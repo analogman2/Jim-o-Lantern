@@ -297,6 +297,7 @@ class Mic(threading.Thread):
         self.muted = threading.Event()
         self.in_speech = False  # someone is talking right now
         self.debug_levels = False
+        self.level = self.thresh = 0.0  # latest loudness and the current trigger level (for the panel)
 
     def mute(self):
         self.muted.set()
@@ -335,6 +336,7 @@ class Mic(threading.Thread):
                 continue
             rms = float(np.sqrt(np.mean(pcm ** 2)))
             thresh = max(floor * self.vad_ratio, self.min_rms)
+            self.level, self.thresh = max(rms, self.level * 0.85), thresh   # a peak meter that falls back
             loud = rms > thresh
             if loud:
                 now = time.time()
@@ -411,7 +413,11 @@ class Camera(threading.Thread):
         if self.crop:
             x, y, w, h = self.crop
             vf = f"crop=iw*{w}:ih*{h}:iw*{x}:ih*{y}," + vf
-        cmd = ["ffmpeg", "-loglevel", "error", "-rtsp_transport", "tcp", "-i", self.url,
+        if self.url.startswith("/dev/"):             # a USB webcam
+            src = ["-f", "v4l2", "-input_format", "mjpeg", "-video_size", "1280x720", "-i", self.url]
+        else:                                        # the security camera (RTSP)
+            src = ["-rtsp_transport", "tcp", "-i", self.url]
+        cmd = ["ffmpeg", "-loglevel", "error", *src,
                "-an", "-vf", vf, "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "4", "-"]
         warned = False
         while True:
@@ -435,6 +441,54 @@ class Camera(threading.Thread):
                 print("[camera] lost the feed; retrying every 5 s", file=sys.stderr)
                 warned = True
             time.sleep(5)
+
+
+class Recorder:
+    """With --record: each visit (wake-up to sleep) goes in its own folder under --record-dir: visit.json (what
+    happened, in order) plus the camera frames, each kid's words as heard (16 kHz WAV) and Jim's replies as played.
+    The control panel plays them back. Old visits are deleted after --record-keep-days."""
+
+    def __init__(self, root, keep_days):
+        self.root, self.keep_days = root, keep_days
+        self.dir, self.entries, self.lock = None, [], threading.Lock()
+        os.makedirs(root, exist_ok=True)
+        self.prune()
+
+    def prune(self):
+        if self.keep_days <= 0:
+            return
+        import shutil
+        cutoff = time.time() - self.keep_days * 86400
+        for name in os.listdir(self.root):
+            d = os.path.join(self.root, name)
+            if os.path.isdir(d) and os.path.getmtime(d) < cutoff:
+                shutil.rmtree(d, ignore_errors=True)
+
+    def add(self, kind, text="", frame=None, kid=None, jim=None, jim_rate=24000, **info):
+        with self.lock:
+            if self.dir is None:
+                self.prune()
+                self.dir = os.path.join(self.root, time.strftime("%Y%m%d-%H%M%S"))
+                os.makedirs(self.dir, exist_ok=True)
+                self.entries = []
+            n = len(self.entries) + 1
+            e = {"n": n, "time": time.strftime("%H:%M:%S"), "kind": kind, "text": text, **info}
+            for key, data, ext in (("frame", frame, "jpg"), ("kid", kid, "wav"), ("jim", jim, "wav")):
+                if data is None or len(data) == 0:
+                    continue
+                name = f"{n:02d}-{key}.{ext}"
+                with open(os.path.join(self.dir, name), "wb") as f:
+                    f.write(data if key == "frame" else wav_bytes(data, MIC_RATE if key == "kid" else jim_rate))
+                e[key] = name
+            self.entries.append(e)
+            tmp = os.path.join(self.dir, "visit.json.tmp")
+            with open(tmp, "w") as f:
+                json.dump({"started": os.path.basename(self.dir), "entries": self.entries}, f, indent=1)
+            os.replace(tmp, os.path.join(self.dir, "visit.json"))
+
+    def end(self):
+        with self.lock:
+            self.dir = None
 
 
 class Watch:
@@ -472,6 +526,9 @@ setInterval(poll,1000);poll();
         self.camera, self.state = camera, state
         self.events = collections.deque(maxlen=60)
         self.judged, self.judged_at, self.verdict = None, 0.0, None
+        self.extra = lambda: {}                      # set later: mic levels
+        self.on_snooze = None                        # set later: POST /snooze {"seconds"}
+        self.port = port
         self.lock = threading.Lock()
         threading.Thread(target=self.serve, args=(port,), daemon=True).start()
 
@@ -501,7 +558,22 @@ setInterval(poll,1000);poll();
                 self.end_headers()
                 self.wfile.write(body)
 
+            def local(self):
+                # only pages from this PC (a website can't reach in by pointing a domain name at 127.0.0.1)
+                return self.headers.get("Host", "") in (f"127.0.0.1:{watch.port}", f"localhost:{watch.port}")
+
+            def do_POST(self):
+                # the control panel's buttons; the custom header keeps other websites' forms out
+                if not self.local() or self.headers.get("X-Jim-Panel") != "1" or self.path != "/snooze" or not watch.on_snooze:
+                    self.send_response(403); self.end_headers(); return
+                n = int(self.headers.get("Content-Length") or 0)
+                seconds = float((json.loads(self.rfile.read(n) or b"{}") if n else {}).get("seconds") or 10)
+                watch.on_snooze(seconds)
+                self.send(b'{"ok": true}', "application/json")
+
             def do_GET(self):
+                if not self.local():
+                    self.send_response(403); self.end_headers(); return
                 path = self.path.split("?")[0]
                 if path == "/":
                     return self.send(watch.PAGE.encode(), "text/html; charset=utf-8")
@@ -513,7 +585,7 @@ setInterval(poll,1000);poll();
                 if path == "/events.json":
                     with watch.lock:
                         d = {"state": watch.state(), "events": list(watch.events), "verdict": watch.verdict,
-                             "judged_at": watch.judged_at}
+                             "judged_at": watch.judged_at, **watch.extra()}
                     return self.send(json.dumps(d).encode(), "application/json")
                 self.send_response(404); self.end_headers()
 
@@ -917,6 +989,7 @@ class OllamaBrain:
     """Same interface as Brain, but talks to a local Ollama model. No API key needed."""
 
     keep_alive = "60m"  # -1 (forever) with --keep-loaded
+    temperature = 0.8   # --temperature
 
     def __init__(self, model, url, extra_prompt):
         self.model, self.url = model, url.rstrip("/")
@@ -949,7 +1022,7 @@ class OllamaBrain:
             "model": self.model, "messages": messages, "stream": stream,
             "think": False,          # qwen-style reasoning just adds latency here
             "keep_alive": self.keep_alive,  # how long Ollama keeps the model on the GPU
-            "options": {"num_predict": max_tokens, "temperature": 0.8, "num_ctx": 4096},
+            "options": {"num_predict": max_tokens, "temperature": self.temperature, "num_ctx": 4096},
         }
         if schema:
             body["format"] = schema
@@ -1262,6 +1335,8 @@ class Voice:
         first = True
         try:
             while (audio := q.get()) is not None:
+                if getattr(self, "tap", None):
+                    self.tap(audio)
                 if first:
                     # A little lead-in silence so the first syllable isn't clipped.
                     audio = np.concatenate([np.zeros(int(self.play_rate * 0.08), np.float32), audio])
@@ -1323,6 +1398,7 @@ class SpeechServiceVoice(Voice):
     def __init__(self, url, instruct, make_local, device, pitch, intonation, echo, grit,
                  lip_offset, face):
         self.url, self.instruct, self.gentle = url.rstrip("/"), instruct, False
+        self.gentle_instruct = JACK_GENTLE_VOICE
         self.make_local, self.local = make_local, None
         self.intonation, self.echo, self.grit = intonation, echo, grit
         self.device, self.lip_offset, self.face = device, lip_offset, face
@@ -1340,7 +1416,7 @@ class SpeechServiceVoice(Voice):
     def speak(self, text, timeout=60):
         import urllib.request
         body = json.dumps({"input": text, "voice": "jack", "response_format": "pcm",
-                           "instructions": JACK_GENTLE_VOICE if self.gentle else self.instruct}).encode()
+                           "instructions": self.gentle_instruct if self.gentle else self.instruct}).encode()
         req = urllib.request.Request(self.url + "/v1/audio/speech", body,
                                      {"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout) as r:   # 16-bit mono PCM at 24 kHz
@@ -1411,7 +1487,7 @@ class ServerVoice(Voice):
         import json
         return json.dumps({
             "text": text,
-            "instruct": JACK_GENTLE_VOICE if self.gentle else self.instruct,
+            "instruct": getattr(self, "gentle_instruct", JACK_GENTLE_VOICE) if self.gentle else self.instruct,
             "exaggeration": self.exaggeration,
             "cfg_weight": 0.3 if self.exaggeration > 0.9 else 0.4,
         }).encode()
@@ -1449,7 +1525,8 @@ def load_config(path=CONFIG_FILE):
         sys.exit(f"{path} has a mistake in it: {e}")
 
 
-def main():
+def build_parser():
+    """Every option (the control panel builds its forms from these too)."""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--wled", default=None, help="WLED IP address (usually set in jim.toml)")
     p.add_argument("--brightness", type=float, default=0.7, help="0..1 overall LED brightness")
@@ -1475,6 +1552,8 @@ def main():
                         "(everything is released when he stops)")
     p.add_argument("--voice-design", default=JACK_VOICE,
                    help="Qwen3-TTS: describe Jim's voice in words")
+    p.add_argument("--gentle-voice-design", default=JACK_GENTLE_VOICE,
+                   help="Qwen3-TTS: the softer voice Jim switches to when a child sounds scared")
     p.add_argument("--tts-model", default=None,
                    help="Chatterbox: turbo (default; fast, supports [laugh] etc.) or original "
                         "(slower, has --exaggeration)")
@@ -1509,6 +1588,8 @@ def main():
     p.add_argument("--model", default="claude-opus-5-5", help="Claude model ID (--brain claude)")
     p.add_argument("--effort", default="low", choices=["low", "medium", "high"],
                    help="Claude effort level (low = fastest replies)")
+    p.add_argument("--temperature", type=float, default=0.8,
+                   help="Ollama: 0.2 = predictable .. 1.2 = wild and random replies")
     p.add_argument("--house", default="", help='extra context, e.g. "Candy bowl is by the '
                    'door, two pieces each."')
     p.add_argument("--vad-ratio", type=float, default=4.0,
@@ -1537,10 +1618,25 @@ def main():
                    help="zoom the camera on the spot in front of the pumpkin, as fractions of "
                         "the frame, e.g. 0.3,0.4,0.4,0.5")
     p.add_argument("--camera-width", type=int, default=768, help="width of frames sent to the AI")
+    p.add_argument("--camera-source", default="auto", choices=["auto", "rtsp", "usb", "none"],
+                   help="where Jim looks: rtsp = the security camera (./set_camera.sh), usb = a USB "
+                        "webcam (--usb-camera), none = blind; auto = the security camera if one is set up")
+    p.add_argument("--usb-camera", default="/dev/video0", help="the USB webcam's device")
+    p.add_argument("--record", action="store_true",
+                   help="save every visit (camera frames, what kids said and Jim's replies, audio "
+                        "and text) to --record-dir for playback in the control panel")
+    p.add_argument("--record-dir", default="recordings", help="where recordings go (not committed)")
+    p.add_argument("--record-keep-days", type=float, default=7,
+                   help="delete recordings older than this many days (0 = keep forever)")
     p.add_argument("--watch-port", type=int, default=0, metavar="PORT",
                    help="show what Jim sees and decides on http://127.0.0.1:PORT (this PC only); 0 = off")
     p.add_argument("--type", action="store_true", help="type instead of using the mic (testing)")
     p.add_argument("--face-only", action="store_true", help="just animate the face (LED test)")
+    return p
+
+
+def main():
+    p = build_parser()
     # jim.toml supplies the defaults; anything on the command line still wins.
     config = load_config()
     options = {a.dest for a in p._actions}
@@ -1621,24 +1717,42 @@ def main():
                      "  export ANTHROPIC_API_KEY=sk-ant-...")
         brain = Brain(args.model, args.effort, args.house)
     brain.max_words = args.max_words
+    brain.temperature = args.temperature
+    voice.gentle_instruct = args.gentle_voice_design
     if chatter and args.tts_model == "turbo":
         brain.system += ("\n\nYour voice can perform sound effects: you may put one of these "
                          "tags inline, at most once per reply: " +
                          ", ".join(f"[{t}]" for t in SOUND_TAGS) +
                          ". Example: \"Oh, that's hilarious. [groan] Not.\"")
     camera = None
-    url = None if args.no_camera else camera_url()
+    cam_source = "none" if args.no_camera else args.camera_source
+    url = args.usb_camera if cam_source == "usb" else camera_url() if cam_source in ("auto", "rtsp") else None
+    if cam_source == "rtsp" and not url:
+        print("[camera] no security camera saved yet (./set_camera.sh or the control panel): Jim is blind", file=sys.stderr)
     if url:
         crop = tuple(float(v) for v in args.camera_crop.split(",")) if args.camera_crop else None
         camera = Camera(url, crop, args.camera_width)
         camera.start()
         brain.system += VISION_RULES
-        print("Camera on: Jim can see costumes.")
+        print("Camera on (" + ("USB webcam" if url.startswith("/dev/") else "security camera") + "): Jim can see costumes.")
     mode_box = ["dark"]                                # the main loop's mode, for the viewer
     watch = Watch(args.watch_port, camera, lambda: f"{mode_box[0]} / {face.state}") if args.watch_port else None
     if watch:
         print(f"Watch what Jim sees: http://127.0.0.1:{args.watch_port}")
     note = watch.event if watch else (lambda text: None)
+    rec = Recorder(args.record_dir, args.record_keep_days) if args.record else None
+    if rec:
+        print(f"Recording visits to {args.record_dir}/ (kept {args.record_keep_days:g} days)")
+
+    def capture():
+        """Collect what Jim says next, as played (for the recording)."""
+        clips = []
+        voice.tap = clips.append if rec else None
+        return clips
+
+    def played(clips):
+        voice.tap = None
+        return np.concatenate(clips) if clips else None
     if args.brain == "ollama":
         import atexit
         atexit.register(brain.unload)  # nothing of Jim stays on the GPU after he stops
@@ -1652,10 +1766,11 @@ def main():
         """The current camera frame, if there is a fresh one."""
         return camera.latest() if camera else None
 
-    def respond(text):
+    def respond(text, heard=None):
         frame = see()
         if watch and frame:
             watch.judge(frame, None)
+        clips = capture()
         if voice.streaming:
             face.state = "thinking"
             t0, said, took = time.time(), [], []
@@ -1673,6 +1788,9 @@ def main():
                 print(f"     (started talking after {took[0]:.2f}s)")
 
             voice.say_stream(sentences(), on_start=started)
+            if rec:
+                rec.add("turn", text, frame, heard, played(clips), voice.play_rate, reply=" ".join(said),
+                        seconds=round(took[0], 2) if took else None, gentle=brain.gentle)
             note(f"🧒 \"{text}\" {'(with a camera frame)' if frame else '(no camera frame)'} → 🎃 \"{' '.join(said)}\""
                  + (f" · talking after {took[0]:.2f} s" if took else "") + (" · gentle mode" if brain.gentle else ""))
             return
@@ -1684,6 +1802,9 @@ def main():
         print(f"  🎃 {reply}   ({time.time() - t0:.2f}s)")
         face.state = "talking"
         voice.play(audio)
+        if rec:
+            rec.add("turn", text, frame, heard, played(clips), voice.play_rate, reply=reply,
+                    seconds=round(time.time() - t0, 2), gentle=brain.gentle)
 
     if args.type:
         face.state = "idle"
@@ -1780,6 +1901,8 @@ def main():
         drain(noises)
         print("💤 Jim is asleep (dark). Make a noise to wake him.")
         note("💤 asleep")
+        if rec:
+            rec.end()
 
     def wake_up():
         mic.mute()
@@ -1807,6 +1930,9 @@ def main():
                 watch.judge(frame, dict(getattr(brain, "last_vision", None) or {}, seconds=seen["seconds"]))
         note("🔥 woke up · " + (f"roasted what he saw: \"{greeting}\"" if greeting else
              "saw nobody / no frame: stock greeting"))
+        verdict = dict(getattr(brain, "last_vision", None) or {}) if frame and "seconds" in seen else None
+        roasted = bool(greeting)
+        clips = capture()
         face.state = "talking"
         if greeting:
             print(f"  🎃 {greeting}   (roasting what he sees)")
@@ -1820,6 +1946,9 @@ def main():
             print(f"  🎃 {greeting}")
             voice.play(greeting_audio.get(greeting)
                        if greeting in greeting_audio else voice.synth(greeting))
+        if rec:
+            rec.add("greeting", greeting, frame, None, played(clips), voice.play_rate, roasted=roasted,
+                    verdict=verdict, seconds=seen.get("seconds"))
         brain.prime(greeting)
         face.state = "idle"
         time.sleep(0.3)  # let the speaker's echo die out before listening again
@@ -1836,6 +1965,10 @@ def main():
         for _ in sys.stdin:  # every Enter press snoozes again
             snooze(args.snooze)
 
+    if watch:
+        watch.on_snooze = snooze
+        watch.extra = lambda: {"mic": {"level": round(mic.level), "thresh": round(mic.thresh)},
+                               "snooze_left": max(0, round(snooze_until[0] - time.time())), "recording": bool(rec)}
     if sys.stdin.isatty():
         threading.Thread(target=keyboard, daemon=True).start()
         print(f"(Press Enter any time to make Jim sleep for {args.snooze:g} s.)")
@@ -1893,7 +2026,10 @@ def main():
                 goodbye = next(goodbyes)
                 print(f"  🎃 {goodbye}")
                 face.state = "talking"
+                clips = capture()
                 voice.say(goodbye)
+                if rec:
+                    rec.add("goodbye", goodbye, None, None, played(clips), voice.play_rate)
                 mic.unmute()
                 mode = mode_box[0] = "dark"
                 go_dark()
@@ -1906,7 +2042,7 @@ def main():
             continue
         print(f"kid> {text}   (stt {time.time() - t0:.2f}s)")
         mic.mute()
-        respond(text)
+        respond(text, audio)
         face.state = "idle"
         time.sleep(0.3)  # let the speaker's echo die out before listening again
         mic.unmute()

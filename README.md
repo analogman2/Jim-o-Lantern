@@ -100,6 +100,30 @@ What I used:
    ./start.sh
    ```
 
+## Control panel
+
+```bash
+./panel.sh
+```
+
+Then open **http://127.0.0.1:8790** on the same PC. The panel runs Jim for you (Start / Stop / Restart / Snooze;
+stopping the panel stops Jim) and has tabs for:
+
+- **Live:** the camera, the exact frame Jim last judged and the vision model's verdict, a hearing meter (how loud
+  the mic is vs. what Jim reacts to), a log of wake-ups and replies, and Jim's console.
+- **Camera:** the security camera's IP, user, stream path and password (saved like `./set_camera.sh`: the
+  password only in `~/.config/jim/rtsp`), or a USB webcam; a Test button grabs a picture.
+- **Mic:** pick the microphone, record 3 seconds to see the background noise and get a suggested minimum loudness.
+- **Voice:** the voice descriptions (normal and gentle), pitch, intonation, echo and grit, with a Preview that
+  plays in the browser.
+- **Replies:** house rules, creativity (temperature), reply length, the chat model, timing and the LED face.
+- **Recordings:** turn recording on, and play back each visit: the frames, what the kids said (as heard) and Jim's
+  replies (as played). Recordings hold children's voices and pictures: they stay in `recordings/` (never
+  committed) and are deleted after `record_keep_days` (7 by default).
+
+Settings are saved to `jim.toml` (your comments are kept); restart Jim to apply them. The panel answers only on
+this PC.
+
 ## Using Jim
 
 | Command | What it does |
@@ -164,6 +188,7 @@ WLED is licensed under the EUPL-1.2, and the patch and prebuilt image are derive
 | File | Purpose |
 |---|---|
 | `pumpkin.py` | Jim: LEDs, mic, wake-up logic, speech recognition, personality, voice playback |
+| `jim_panel.py` / `panel.html` / `panel.sh` | The control panel (http://127.0.0.1:8790) |
 | `tts_server.py` | Local TTS server for Chatterbox, and the Qwen3-TTS fallback when the speech service is down |
 | `start.sh` / `run.sh` | Launchers |
 | `setup.sh` | Creates the Python environments and downloads models |

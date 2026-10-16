@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Jim's control panel</title>
+<style>
+:root{--bg:#f6f3ef;--card:#fff;--ink:#1d1a17;--mute:#6f675f;--line:#e4ddd5;--accent:#e2630f;--ok:#2f8f46;--bad:#c23b2b;--chip:#f1ebe4}
+@media (prefers-color-scheme:dark){:root{--bg:#141210;--card:#1e1b18;--ink:#efe9e2;--mute:#a39a90;--line:#332e29;--accent:#ff8a2b;--ok:#5fc97a;--bad:#ff6b5b;--chip:#2a2622}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 16px;border-bottom:1px solid var(--line);background:var(--card);position:sticky;top:0;z-index:5}
+header h1{font-size:18px;margin:0;margin-right:auto}
+.pill{border-radius:99px;padding:3px 10px;font-size:13px;font-weight:600;background:var(--chip);color:var(--mute)}.pill.on{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+.pill.warn{background:color-mix(in srgb,var(--bad) 15%,transparent);color:var(--bad)}
+nav{display:flex;gap:4px;overflow-x:auto;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--card)}
+nav button{border:0;background:none;color:var(--mute);font:inherit;padding:7px 12px;border-radius:8px;cursor:pointer;white-space:nowrap}
+nav button.on{background:var(--chip);color:var(--ink);font-weight:600}
+main{max-width:1100px;margin:0 auto;padding:16px}
+.tab{display:none}.tab.on{display:block}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:16px;min-width:0}
+.card h2{font-size:15px;margin:0 0 10px}
+button.b{font:inherit;border:1px solid var(--line);background:var(--chip);color:var(--ink);border-radius:8px;padding:7px 14px;cursor:pointer}
+button.b:hover{border-color:var(--accent)}button.b.go{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button.b:disabled{opacity:.5;cursor:default}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+img.view{width:100%;border-radius:8px;background:var(--chip);display:block;aspect-ratio:16/9;object-fit:cover}
+img.view:not([src]){visibility:hidden}
+.field{margin-bottom:14px}.field label{display:block;font-weight:600;margin-bottom:4px}
+.field .help{color:var(--mute);font-size:13px;margin-top:3px}
+input[type=text],input[type=number],input[type=password],select,textarea{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 9px}
+textarea{min-height:76px;resize:vertical}input[type=checkbox]{width:18px;height:18px;vertical-align:middle;margin-right:6px}
+.changed input,.changed select,.changed textarea{border-color:var(--accent)}
+.meter{height:16px;background:var(--chip);border-radius:8px;position:relative;overflow:hidden}
+.meter i{position:absolute;inset:0 auto 0 0;background:var(--ok);transition:width .15s}.meter b{position:absolute;top:0;bottom:0;width:2px;background:var(--bad)}
+.verdict{font-weight:600;margin-top:8px}.yes{color:var(--ok)}.no{color:var(--mute)}.err{color:var(--bad)}
+ul.log{list-style:none;padding:0;margin:0;max-height:340px;overflow:auto}ul.log li{padding:6px 0;border-top:1px solid var(--line);font-size:14px}
+.t{color:var(--mute);font-size:12px;margin-right:6px;font-variant-numeric:tabular-nums}
+pre.console{margin:0;max-height:300px;overflow:auto;font:12px/1.4 ui-monospace,monospace;white-space:pre-wrap;background:var(--bg);border-radius:8px;padding:8px}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;display:none;gap:10px;align-items:center;z-index:9;max-width:calc(100% - 32px)}
+.visit{display:flex;gap:12px;align-items:center;padding:8px;border-radius:10px;cursor:pointer;border:1px solid transparent}.visit:hover{border-color:var(--line)}
+.visit img{width:96px;aspect-ratio:16/9;object-fit:cover;border-radius:6px;background:var(--chip);flex:none}
+.entry{display:grid;grid-template-columns:minmax(0,220px) 1fr;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
+.entry img{width:100%;border-radius:6px}.entry audio{width:100%;height:36px;margin-top:4px}
+.kind{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent)}
+.muted{color:var(--mute)}.bars{display:flex;align-items:flex-end;gap:1px;height:50px;margin-top:8px}.bars i{flex:1;background:var(--ok);min-height:1px}
+@media (max-width:560px){.entry{grid-template-columns:1fr}}
+</style></head><body>
+<header><h1>🎃 Jim</h1><span id="pill" class="pill">…</span>
+<button class="b go" id="startBtn">Start</button><button class="b" id="restartBtn">Restart</button><button class="b" id="stopBtn">Stop</button>
+<button class="b" id="snoozeBtn" title="dark and deaf for a while: time to leave">Snooze</button></header>
+<nav id="nav"></nav>
+<main>
+<section class="tab" id="tab-live">
+ <div id="others" class="card" style="display:none"></div>
+ <div class="grid">
+  <div class="card"><h2>Live camera</h2><img class="view" id="live" alt=""><div class="muted" id="liveNote">Jim isn't running.</div></div>
+  <div class="card"><h2>Last frame Jim judged</h2><img class="view" id="judged" alt=""><div class="verdict" id="verdict"></div></div>
+ </div>
+ <div class="grid">
+  <div class="card"><h2>Hearing</h2><div class="meter"><i id="lvl"></i><b id="thr"></b></div>
+   <div class="muted" id="lvlText" style="margin-top:6px">—</div></div>
+  <div class="card"><h2>State</h2><div id="stateText" class="muted">—</div></div>
+ </div>
+ <div class="card"><h2>What happened</h2><ul class="log" id="events"></ul></div>
+ <div class="card"><h2>Console</h2><pre class="console" id="console"></pre></div>
+</section>
+<section class="tab" id="tab-camera">
+ <div class="grid">
+  <div class="card"><h2>Security camera</h2>
+   <div class="field"><label>IP address</label><input type="text" id="camIp"></div>
+   <div class="field"><label>User</label><input type="text" id="camUser"></div>
+   <div class="field"><label>Stream path</label><input type="text" id="camPath"><div class="help">Reolink: h264Preview_01_main</div></div>
+   <div class="field"><label>Password</label><input type="password" id="camPass" autocomplete="new-password"><div class="help" id="camPassHelp"></div></div>
+   <div class="row"><button class="b go" id="camSave">Save camera</button></div></div>
+  <div class="card"><h2>Test</h2><img class="view" id="camTest" alt=""><div class="muted" id="camTestNote">Grab one picture with the settings as saved.</div>
+   <div class="row" style="margin-top:8px"><button class="b" id="camTestRtsp">Security camera</button><button class="b" id="camTestUsb">USB webcam</button></div></div>
+ </div>
+ <div id="fields-camera"></div>
+</section>
+<section class="tab" id="tab-mic">
+ <div class="grid">
+  <div id="fields-mic"></div>
+  <div><div class="card"><h2>Test the mic</h2><div class="muted">Records 3 seconds (when Jim isn't using the mic) and suggests a minimum loudness. Talk at the distance kids will.</div>
+   <div class="row" style="margin-top:8px"><button class="b" id="micTest">Record 3 s</button></div><div id="micResult" style="margin-top:8px"></div><div class="bars" id="micBars"></div></div>
+   <div class="card"><h2>Live (while Jim runs)</h2><div class="meter"><i id="lvl2"></i><b id="thr2"></b></div><div class="muted" id="lvlText2" style="margin-top:6px">—</div></div></div>
+ </div>
+</section>
+<section class="tab" id="tab-voice">
+ <div class="grid">
+  <div id="fields-voice"></div>
+  <div><div class="card"><h2>Preview</h2><div class="field"><label>Line</label><textarea id="pvText">Who dares wake me? Nice costume. Did your mom make it, or did she lose a bet?</textarea></div>
+   <div class="row"><button class="b go" id="pv">Hear it</button><button class="b" id="pvGentle">Hear the gentle voice</button></div>
+   <div class="muted" id="pvNote" style="margin-top:6px">Uses the settings on this page, saved or not. Plays here, not on Jim's speaker. The first one takes ~10 s while the voice loads.</div>
+   <audio id="pvAudio" controls style="width:100%;margin-top:8px"></audio></div></div>
+ </div>
+</section>
+<section class="tab" id="tab-responses"><div id="fields-responses" class="grid"></div></section>
+<section class="tab" id="tab-recordings">
+ <div class="grid"><div id="fields-recordings"></div>
+  <div class="card"><h2>Privacy</h2><div class="muted">Recordings hold children's voices and pictures. They stay on this PC in <code id="recDir"></code>, are never committed, and old ones are deleted automatically. Consider a sign at the driveway.</div>
+   <div class="row" style="margin-top:8px"><button class="b" id="recDelAll">Delete all recordings</button></div></div></div>
+ <div class="grid"><div class="card"><h2>Visits</h2><div id="visits" class="muted">—</div></div><div class="card" id="visitCard" style="display:none"><h2 id="visitTitle"></h2><div id="visit"></div></div></div>
+</section>
+</main>
+<div class="toast" id="toast"><span id="toastText"></span><button class="b" id="toastBtn" style="display:none">Restart Jim</button></div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"})[c]);
+async function api(path, opts = {}) {
+  const r = await fetch(path, {...opts, headers: {"X-Jim-Panel": "1", "Content-Type": "application/json", ...(opts.headers || {})}});
+  if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m } catch (e) {} throw new Error(m) }
+  return r;
+}
+const post = (path, body) => api(path, {method: "POST", body: JSON.stringify(body || {})});
+let toastTimer;
+function toast(text, restart) {
+  $("toastText").textContent = text; $("toastBtn").style.display = restart ? "" : "none";
+  $("toast").style.display = "flex"; clearTimeout(toastTimer); toastTimer = setTimeout(() => $("toast").style.display = "none", restart ? 9000 : 4000);
+}
+$("toastBtn").onclick = () => control("restart");
+
+// ---- tabs
+const TABS = [["live", "Live"], ["camera", "Camera"], ["mic", "Mic"], ["voice", "Voice"], ["responses", "Replies"], ["recordings", "Recordings"]];
+function show(name) {
+  for (const [k] of TABS) { $("tab-" + k).classList.toggle("on", k === name); document.querySelector(`nav [data-t=${k}]`).classList.toggle("on", k === name) }
+  try { localStorage.setItem("jimTab", name) } catch (e) {}
+  if (name === "recordings") loadVisits();
+}
+$("nav").innerHTML = TABS.map(([k, t]) => `<button data-t="${k}">${t}</button>`).join("");
+$("nav").onclick = e => e.target.dataset.t && show(e.target.dataset.t);
+
+// ---- settings forms (built from Jim's own options)
+let S = null, D = {mics: [], speakers: [], cameras: [], models: []};
+const fieldEls = {};
+function fieldHtml(f) {
+  const id = "f_" + f.name, v = f.value;
+  let input;
+  if (f.kind === "bool") input = `<label><input type="checkbox" id="${id}" ${v ? "checked" : ""}>${esc(f.name.replaceAll("_", " "))}</label>`;
+  else if (f.choices) input = `<select id="${id}">${f.choices.map(c => `<option ${c === v ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
+  else if (f.pick) {
+    const opts = (D[f.pick] || []).map(([val, desc]) => `<option value="${esc(val)}" ${val === v ? "selected" : ""}>${esc(desc ? `${desc} — ${val}` : val)}</option>`);
+    if (v != null && !(D[f.pick] || []).some(([val]) => val === v)) opts.unshift(`<option selected value="${esc(v)}">${esc(v)}</option>`);
+    input = `<select id="${id}">${opts.join("")}</select>`;
+  } else if (f.long) input = `<textarea id="${id}">${esc(v)}</textarea>`;
+  else input = `<input type="${f.kind === "str" ? "text" : "number"}" ${f.kind === "float" ? 'step="any"' : ""} id="${id}" value="${esc(v ?? "")}" placeholder="${f.default == null ? "automatic" : ""}">`;
+  return `<div class="field" data-name="${f.name}">${f.kind === "bool" ? "" : `<label for="${id}">${esc(f.name.replaceAll("_", " "))}</label>`}${input}<div class="help">${esc(f.help)}${f.default != null && f.default !== "" && !f.long ? ` · default ${esc(f.default)}` : ""}</div></div>`;
+}
+function readField(f) {
+  const el = $("f_" + f.name);
+  if (f.kind === "bool") return el.checked;
+  if (el.value === "" && f.kind !== "str") return null;
+  return f.kind === "int" ? parseInt(el.value) : f.kind === "float" ? parseFloat(el.value) : el.value;
+}
+function renderForms() {
+  for (const [tab, sections] of Object.entries(S.tabs)) {
+    const box = $("fields-" + tab); if (!box) continue;
+    box.innerHTML = sections.map((s, i) => `<div class="card"><h2>${esc(s.title)}</h2>${s.fields.map(fieldHtml).join("")}
+      ${i === sections.length - 1 ? `<div class="row"><button class="b go" data-save="${tab}">Save</button><span class="muted" data-dirty="${tab}"></span></div>` : ""}</div>`).join("");
+    for (const s of sections) for (const f of s.fields) {
+      fieldEls[f.name] = f;
+      const el = $("f_" + f.name);
+      el.addEventListener("input", () => { el.closest(".field").classList.toggle("changed", JSON.stringify(readField(f)) !== JSON.stringify(f.value)) });
+    }
+  }
+}
+document.addEventListener("click", async e => {
+  const tab = e.target.dataset?.save; if (!tab) return;
+  const changes = {};
+  for (const s of S.tabs[tab]) for (const f of s.fields) { const v = readField(f); if (v !== null && JSON.stringify(v) !== JSON.stringify(f.value)) changes[f.name] = v }
+  if (!Object.keys(changes).length) return toast("Nothing changed");
+  try {
+    const d = await (await post("/api/settings", changes)).json();
+    for (const [k, v] of Object.entries(changes)) { fieldEls[k].value = v; $("f_" + k).closest(".field").classList.remove("changed") }
+    toast(d.restart ? "Saved. Restart Jim to use it." : "Saved.", d.restart);
+  } catch (err) { toast("Not saved: " + err.message) }
+});
+async function loadSettings() {
+  [S, D] = await Promise.all([api("/api/settings").then(r => r.json()), api("/api/devices").then(r => r.json())]);
+  renderForms();
+  const c = S.camera; $("camIp").value = c.ip; $("camUser").value = c.user; $("camPath").value = c.path;
+  $("camPassHelp").textContent = c.password_saved ? "A password is saved. Leave this empty to keep it." : "No password saved yet.";
+}
+
+// ---- Jim: start / stop / status
+let status = {};
+async function control(what, pid) {
+  try { status = await (await post("/api/jim/" + what, pid ? {pid} : {})).json(); paintStatus(); toast(what === "stop" ? "Jim stopped." : "Jim is starting… (the voice and brain take ~20 s)") }
+  catch (e) { toast(e.message) }
+}
+$("startBtn").onclick = () => control("start"); $("stopBtn").onclick = () => control("stop"); $("restartBtn").onclick = () => control("restart");
+$("snoozeBtn").onclick = async () => { try { await post("/api/snooze", {seconds: fieldEls.snooze?.value || 10}); toast("Snoozing: dark and deaf for a bit.") } catch (e) { toast(e.message) } };
+function paintStatus() {
+  const on = status.running;
+  $("pill").textContent = on ? `running · ${Math.round(status.uptime_s / 60)} min` : status.others?.length ? "running elsewhere" : "stopped";
+  $("pill").className = "pill " + (on ? "on" : status.others?.length ? "warn" : "");
+  $("startBtn").disabled = on; $("stopBtn").disabled = !on; $("restartBtn").disabled = !on; $("snoozeBtn").disabled = !on;
+  const others = status.others || [];
+  $("others").style.display = others.length ? "" : "none";
+  $("others").innerHTML = others.length ? `<h2>Jim is running outside the panel</h2><div class="muted">Started with ./start.sh (pid ${others.join(", ")}). Only one copy can use the mic, so stop it to run him from here.</div>
+    <div class="row" style="margin-top:8px">${others.map(p => `<button class="b" data-kill="${p}">Stop pid ${p}</button>`).join("")}</div>` : "";
+  const con = $("console"), atEnd = con.scrollTop + con.clientHeight >= con.scrollHeight - 20;
+  con.textContent = (status.log || []).join("\n"); if (atEnd) con.scrollTop = con.scrollHeight;
+  $("liveNote").textContent = on ? "" : "Jim isn't running.";
+}
+document.addEventListener("click", e => { if (e.target.dataset?.kill) control("stop", +e.target.dataset.kill) });
+
+// ---- live view (Jim's own viewer, through the panel)
+let judgedAt = 0;
+function meter(i, b, t, mic) {
+  const top = Math.max(mic.thresh * 2.5, 1);
+  $(i).style.width = Math.min(100, mic.level / top * 100) + "%"; $(b).style.left = Math.min(100, mic.thresh / top * 100) + "%";
+  $(t).textContent = `loudness ${mic.level} · Jim reacts above ${mic.thresh}` + (mic.level > mic.thresh ? " · hearing something" : "");
+}
+async function pollLive() {
+  try { status = await (await api("/api/status")).json(); paintStatus() } catch (e) {}
+  if (!status.running) return;
+  try {
+    const d = await (await api("/jim/events.json")).json();
+    $("stateText").textContent = d.state + (d.snooze_left ? ` · snoozing ${d.snooze_left} s` : "") + (d.recording ? " · recording" : "");
+    if (d.mic) { meter("lvl", "thr", "lvlText", d.mic); meter("lvl2", "thr2", "lvlText2", d.mic) }
+    if (d.judged_at && d.judged_at !== judgedAt) { judgedAt = d.judged_at; $("judged").src = "/jim/judged.jpg?" + judgedAt }
+    const v = d.verdict;
+    $("verdict").className = "verdict " + (v ? (v.error ? "err" : v.visible ? "yes" : "no") : "");
+    $("verdict").textContent = v ? (v.error ? "⚠ " + v.error : (v.visible ? "Sees trick-or-treaters" : "Sees nobody") + (v.seconds != null ? ` · ${v.seconds} s` : "")) : judgedAt ? "" : "Nothing judged yet: wake Jim up.";
+    $("events").innerHTML = d.events.slice().reverse().map(e => `<li><span class="t">${esc(e.time)}</span>${esc(e.text)}</li>`).join("");
+  } catch (e) {}
+}
+setInterval(pollLive, 1000);
+setInterval(() => { if (status.running && $("tab-live").classList.contains("on")) $("live").src = "/jim/live.jpg?" + Date.now() }, 600);
+
+// ---- camera
+$("camSave").onclick = async () => {
+  try {
+    const d = await (await post("/api/camera", {ip: $("camIp").value, user: $("camUser").value, path: $("camPath").value, password: $("camPass").value})).json();
+    $("camPass").value = ""; S.camera = d.camera; $("camPassHelp").textContent = "A password is saved. Leave this empty to keep it.";
+    toast(d.restart ? "Camera saved. Restart Jim to use it." : "Camera saved.", d.restart);
+  } catch (e) { toast("Not saved: " + e.message) }
+};
+async function camTest(source) {
+  $("camTestNote").textContent = "Asking the camera for a picture…";
+  try {
+    const r = await post("/api/camera/test", {source, usb_camera: fieldEls.usb_camera ? readField(fieldEls.usb_camera) : undefined});
+    $("camTest").src = URL.createObjectURL(await r.blob()); $("camTestNote").textContent = source === "usb" ? "USB webcam: working." : "Security camera: working.";
+  } catch (e) { $("camTest").removeAttribute("src"); $("camTestNote").textContent = "⚠ " + e.message }
+}
+$("camTestRtsp").onclick = () => camTest("rtsp"); $("camTestUsb").onclick = () => camTest("usb");
+
+// ---- mic test
+$("micTest").onclick = async () => {
+  $("micResult").textContent = "Recording 3 s…"; $("micBars").innerHTML = "";
+  try {
+    const d = await (await post("/api/mic/test", {device: readField(fieldEls.mic)})).json();
+    $("micResult").innerHTML = `Background noise <b>${d.noise}</b>, loudest <b>${d.loudest}</b>. A good minimum loudness is about <b>${d.suggested_min_rms}</b>.
+      <button class="b" id="useMin">Use ${d.suggested_min_rms}</button>`;
+    const top = Math.max(...d.levels, 1); $("micBars").innerHTML = d.levels.map(x => `<i style="height:${Math.max(2, x / top * 100)}%"></i>`).join("");
+    $("useMin").onclick = () => { const el = $("f_min_rms"); el.value = d.suggested_min_rms; el.dispatchEvent(new Event("input")); toast("Set: press Save to keep it.") };
+  } catch (e) { $("micResult").textContent = "⚠ " + e.message }
+};
+
+// ---- voice preview
+async function preview(gentle) {
+  const val = n => fieldEls[n] ? readField(fieldEls[n]) : null;
+  $("pvNote").textContent = "Making the clip…";
+  try {
+    const r = await post("/api/voice/preview", {text: $("pvText").value, gentle, voice_design: val("voice_design"), gentle_voice_design: val("gentle_voice_design"),
+      pitch: val("pitch"), intonation: val("intonation"), echo: val("echo"), grit: val("grit")});
+    $("pvAudio").src = URL.createObjectURL(await r.blob()); $("pvAudio").play(); $("pvNote").textContent = gentle ? "The gentle voice (for scared kids)." : "Jim's voice.";
+  } catch (e) { $("pvNote").textContent = "⚠ " + e.message }
+}
+$("pv").onclick = () => preview(false); $("pvGentle").onclick = () => preview(true);
+
+// ---- recordings
+async function loadVisits() {
+  try {
+    const d = await (await api("/api/recordings")).json(); $("recDir").textContent = d.dir;
+    $("visits").innerHTML = d.visits.length ? d.visits.map(v => {
+      const when = v.id.replace(/^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)$/, "$2/$3 $4:$5");
+      return `<div class="visit" data-visit="${v.id}">${v.frame ? `<img src="/rec/${v.id}/${v.frame}" alt="">` : `<img alt="">`}
+        <div><b>${when}</b> · ${v.turns} ${v.turns === 1 ? "reply" : "replies"}${v.roasted ? " · costume roast" : ""}<div class="muted">${esc(v.first)}</div></div></div>`;
+    }).join("") : "No visits recorded yet. Turn on <b>record</b> above, save, and restart Jim.";
+  } catch (e) { $("visits").textContent = "⚠ " + e.message }
+}
+document.addEventListener("click", async e => {
+  const el = e.target.closest?.("[data-visit]"); if (!el) return;
+  const id = el.dataset.visit, v = await (await api("/api/recordings/" + id)).json();
+  $("visitCard").style.display = ""; $("visitTitle").innerHTML = `Visit ${esc(id)} <button class="b" id="delVisit" style="float:right">Delete</button>`;
+  $("visit").innerHTML = v.entries.map(x => `<div class="entry"><div>${x.frame ? `<img src="/rec/${id}/${x.frame}" alt="">` : ""}</div><div>
+    <div class="kind">${esc(x.kind)} · <span class="t">${esc(x.time)}</span>${x.seconds != null ? ` <span class="t">${x.seconds} s</span>` : ""}${x.gentle ? ` <span class="t">gentle</span>` : ""}</div>
+    ${x.kind === "turn" ? `<div>🧒 ${esc(x.text)}</div>${x.kid ? `<audio controls preload="none" src="/rec/${id}/${x.kid}"></audio>` : ""}<div style="margin-top:6px">🎃 ${esc(x.reply)}</div>`
+      : `<div>🎃 ${esc(x.text)}</div>${x.verdict ? `<div class="muted">${x.verdict.error ? "⚠ " + esc(x.verdict.error) : x.verdict.visible ? "saw trick-or-treaters" : "saw nobody"}</div>` : ""}`}
+    ${x.jim ? `<audio controls preload="none" src="/rec/${id}/${x.jim}"></audio>` : ""}</div></div>`).join("");
+  $("delVisit").onclick = async () => { if (!confirm("Delete this visit?")) return; await api("/api/recordings/" + id, {method: "DELETE"}); $("visitCard").style.display = "none"; loadVisits() };
+  $("visitCard").scrollIntoView({behavior: "smooth"});
+});
+$("recDelAll").onclick = async () => { if (!confirm("Delete every recorded visit?")) return; await api("/api/recordings", {method: "DELETE"}); $("visitCard").style.display = "none"; loadVisits(); toast("All recordings deleted.") };
+
+let first = "live"; try { first = localStorage.getItem("jimTab") || "live" } catch (e) {}
+loadSettings().then(() => show(TABS.some(([k]) => k === first) ? first : "live")).catch(e => toast("Couldn't load settings: " + e.message));
+pollLive();
+</script></body></html>
