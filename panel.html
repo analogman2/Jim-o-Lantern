@@ -80,6 +80,7 @@ pre.console{margin:0;max-height:300px;overflow:auto;font:12px/1.4 ui-monospace,m
 .vbar b::before{content:"";position:absolute;left:-6px;right:-6px;top:-8px;bottom:-8px}
 .vbar b span{position:absolute;left:calc(100% + 6px);top:50%;transform:translateY(-50%);white-space:nowrap;font-size:11px;font-weight:600;color:#fff;background:#3d71d9;border-radius:3px;padding:1px 5px;display:none}
 .vbar.dragging b span,.vbar:hover b span{display:block}
+.vbar.muted{filter:grayscale(1) brightness(.7)}
 .vread{display:flex;flex-direction:column;justify-content:flex-end;min-width:0}.vread .dv{font-size:28px}.dash ul.log{max-height:none}.dash ul.log li{border-top-color:#22252b;color:var(--g-text)}
 .dash pre.console{max-height:none;background:#0b0c0e;color:#b7c0c8;margin:0}.dash .verdict{margin:0}.dash .yes{color:var(--g-green)}.dash .no{color:var(--g-mute)}.dash .err{color:var(--g-red)}
 @media (max-width:700px){.dgrid{display:flex;flex-direction:column}.dp{min-height:120px}.dp[data-h="360"]{height:340px}.dp[data-h="270"],.dp[data-h="320"]{height:280px}.rs{display:none}.dt{cursor:default}}
@@ -335,11 +336,13 @@ function vmeter(mic) {
     $("lvl").style.height = "100%"; $("lvlDb").textContent = "no sound"; $("lvlDb").style.color = "#f2495c";
     $("lvlText").textContent = "The microphone isn't sending anything (unplugged?). Jim keeps retrying."; return;
   }
-  const db = dbfs(mic.level), th = thrDrag ?? dbfs(mic.thresh), on = mic.level > mic.thresh;
+  const db = dbfs(mic.level), th = thrDrag ?? dbfs(mic.thresh), on = mic.level > mic.thresh && !mic.muted;
+  $("vbar").classList.toggle("muted", !!mic.muted);
   $("lvl").style.height = (100 - pctDb(db)) + "%"; $("thr").style.bottom = `calc(${pctDb(th)}% - 1px)`;
   $("thrTag").textContent = Math.round(th) + " dB";
   $("lvlDb").textContent = db <= -89 ? "—" : Math.round(db) + " dB"; $("lvlDb").style.color = on ? "#73bf69" : "#8e8e9a";
   const floorHigher = mic.min_rms && mic.thresh > mic.min_rms * 1.05;
+  if (mic.muted) { $("lvlDb").style.color = "#8e8e9a"; $("lvlText").innerHTML = "ears paused while Jim talks<br>(so he doesn't hear himself)"; return }
   $("lvlText").innerHTML = `Jim reacts above <b>${Math.round(th)} dB</b>` + (on ? "<br>hearing something" : "")
     + (floorHigher && thrDrag == null ? `<br><span title="Jim also needs speech to be several times louder than the room's background noise">set to ${Math.round(dbfs(mic.min_rms))} dB; the background noise raises it now</span>` : "");
 }

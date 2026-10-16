@@ -345,10 +345,11 @@ class Mic(threading.Thread):
         last_loud, onset_frames = 0.0, 0
         for pcm in self.frames():
             self.in_speech = in_speech
-            if self.muted.is_set():
+            rms = float(np.sqrt(np.mean(pcm ** 2)))
+            if self.muted.is_set():                 # Jim is talking: don't listen, but keep the panel's meter alive
+                self.level, self.level_t = max(rms, self.level * 0.85), time.time()
                 preroll, speech, loud_run, in_speech = [], [], 0, False
                 continue
-            rms = float(np.sqrt(np.mean(pcm ** 2)))
             thresh = max(floor * self.vad_ratio, self.min_rms)
             self.level, self.thresh = max(rms, self.level * 0.85), thresh   # a peak meter that falls back
             self.level_t = time.time()
@@ -2052,7 +2053,8 @@ def main():
             return {"level": round(getattr(voice, "out_level", 0)) if fresh else 0, "playing": fresh,
                     "volume": round(getattr(voice, "volume", 1.0), 3), "device": args.speaker}
         watch.extra = lambda: {"mic": {"level": round(mic.level), "thresh": round(mic.thresh), "min_rms": round(mic.min_rms),
-                                       "age_s": round(time.time() - mic.level_t, 1) if mic.level_t else None},
+                                       "age_s": round(time.time() - mic.level_t, 1) if mic.level_t else None,
+                                       "muted": mic.muted.is_set()},
                                "speaker": speaker_level(),
                                "snooze_left": max(0, round(snooze_until[0] - time.time())), "recording": bool(rec),
                                "metrics": {k: list(v) for k, v in metrics.items()}, "camera": camera.stats() if camera else None}
