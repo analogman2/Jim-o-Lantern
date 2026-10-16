@@ -400,6 +400,15 @@ class Camera(threading.Thread):
         self.crop = crop  # (x, y, w, h) as fractions of the frame, or None
         self.frame, self.frame_time = None, 0.0
         self.lock = threading.Lock()
+        self.times, self.reconnects = [], 0          # for the control panel's network card
+
+    def stats(self):
+        now = time.time()
+        with self.lock:
+            recent = [t for t in self.times if now - t < 5]
+            age = now - self.frame_time if self.frame_time else None
+        return {"fps": round(len(recent) / 5, 1), "age_s": round(age, 1) if age is not None else None,
+                "reconnects": self.reconnects, "kind": "usb" if self.url.startswith("/dev/") else "rtsp"}
 
     def latest(self, max_age=3.0):
         """The newest frame (JPEG bytes) if it's fresh, else None."""
@@ -432,11 +441,13 @@ class Camera(threading.Thread):
                         break
                     with self.lock:
                         self.frame, self.frame_time = buf[start:end + 2], time.time()
+                        self.times = self.times[-20:] + [self.frame_time]
                     if warned:
                         print("[camera] connected again")
                         warned = False
                     buf = buf[end + 2:]
             proc.wait()
+            self.reconnects += 1
             if not warned:  # never print the URL: it contains the password
                 print("[camera] lost the feed; retrying every 5 s", file=sys.stderr)
                 warned = True
@@ -1741,6 +1752,13 @@ def main():
         print(f"Watch what Jim sees: http://127.0.0.1:{args.watch_port}")
     note = watch.event if watch else (lambda text: None)
     rec = Recorder(args.record_dir, args.record_keep_days) if args.record else None
+    import collections
+    # seconds, newest last: hear = speech to text; think = first sentence from the model; first_word = the kid
+    # stopped talking -> Jim's voice starts; vision = the camera roast at wake-up
+    metrics = {k: collections.deque(maxlen=30) for k in ("hear", "think", "first_word", "vision")}
+
+    def metric(kind, seconds):
+        metrics[kind].append(round(seconds, 2))
     if rec:
         print(f"Recording visits to {args.record_dir}/ (kept {args.record_keep_days:g} days)")
 
@@ -1766,7 +1784,7 @@ def main():
         """The current camera frame, if there is a fresh one."""
         return camera.latest() if camera else None
 
-    def respond(text, heard=None):
+    def respond(text, heard=None, t_heard=None):
         frame = see()
         if watch and frame:
             watch.judge(frame, None)
@@ -1777,6 +1795,8 @@ def main():
 
             def sentences():
                 for s in brain.reply_sentences(text, frame):
+                    if not said:
+                        metric("think", time.time() - t0)
                     voice.gentle = brain.gentle  # softer voice for a scared kid
                     print(f"  🎃 {s}")
                     said.append(s.strip())
@@ -1785,6 +1805,7 @@ def main():
             def started():
                 face.state = "talking"
                 took.append(time.time() - t0)
+                metric("first_word", time.time() - (t_heard or t0))
                 print(f"     (started talking after {took[0]:.2f}s)")
 
             voice.say_stream(sentences(), on_start=started)
@@ -1797,10 +1818,12 @@ def main():
         face.state = "thinking"
         t0 = time.time()
         reply = " ".join(s.strip() for s in brain.reply_sentences(text, frame)).strip()
+        metric("think", time.time() - t0)
         note(f"🧒 \"{text}\" → 🎃 \"{reply}\" · {time.time() - t0:.2f} s")
         audio = voice.synth(reply)  # the whole reply in one take, so it flows naturally
         print(f"  🎃 {reply}   ({time.time() - t0:.2f}s)")
         face.state = "talking"
+        metric("first_word", time.time() - (t_heard or t0))
         voice.play(audio)
         if rec:
             rec.add("turn", text, frame, heard, played(clips), voice.play_rate, reply=reply,
@@ -1931,6 +1954,8 @@ def main():
         note("🔥 woke up · " + (f"roasted what he saw: \"{greeting}\"" if greeting else
              "saw nobody / no frame: stock greeting"))
         verdict = dict(getattr(brain, "last_vision", None) or {}) if frame and "seconds" in seen else None
+        if "seconds" in seen:
+            metric("vision", seen["seconds"])
         roasted = bool(greeting)
         clips = capture()
         face.state = "talking"
@@ -1968,7 +1993,8 @@ def main():
     if watch:
         watch.on_snooze = snooze
         watch.extra = lambda: {"mic": {"level": round(mic.level), "thresh": round(mic.thresh)},
-                               "snooze_left": max(0, round(snooze_until[0] - time.time())), "recording": bool(rec)}
+                               "snooze_left": max(0, round(snooze_until[0] - time.time())), "recording": bool(rec),
+                               "metrics": {k: list(v) for k, v in metrics.items()}, "camera": camera.stats() if camera else None}
     if sys.stdin.isatty():
         threading.Thread(target=keyboard, daemon=True).start()
         print(f"(Press Enter any time to make Jim sleep for {args.snooze:g} s.)")
@@ -2041,8 +2067,9 @@ def main():
             face.state = "idle"
             continue
         print(f"kid> {text}   (stt {time.time() - t0:.2f}s)")
+        metric("hear", time.time() - t0)
         mic.mute()
-        respond(text, audio)
+        respond(text, audio, t0)
         face.state = "idle"
         time.sleep(0.3)  # let the speaker's echo die out before listening again
         mic.unmute()
@@ -2052,8 +2079,8 @@ def main():
 if __name__ == "__main__":
     import signal
     for sig in (signal.SIGTERM, signal.SIGHUP):  # kill, or closing the terminal: clean up first
-        signal.signal(sig, lambda *a: sys.exit(0))
+        signal.signal(sig, lambda n, f: (print(f"[jim] stopped by {signal.Signals(n).name}", flush=True), sys.exit(0)))
     try:
         main()
     except KeyboardInterrupt:
-        pass
+        print("[jim] stopped by Ctrl+C (SIGINT)", flush=True)

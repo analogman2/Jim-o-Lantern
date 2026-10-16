@@ -294,14 +294,17 @@ class Jim:
             self.log.append(f"--- starting Jim at {time.strftime('%H:%M:%S')}")
             self.proc = subprocess.Popen([str(PYTHON), "-u", "pumpkin.py", "--watch-port", str(WATCH_PORT)], cwd=HERE,
                                          stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                         env=dict(os.environ, PYTHONUNBUFFERED="1"), text=True, bufsize=1)
+                                         env=dict(os.environ, PYTHONUNBUFFERED="1"), text=True, bufsize=1,
+                                         start_new_session=True)   # terminal signals go to the panel; it stops Jim
             self.started = time.time()
             threading.Thread(target=self.read, args=(self.proc,), daemon=True).start()
 
     def read(self, proc):
         for line in proc.stdout:
             self.log.append(line.rstrip("\n"))
-        self.log.append(f"--- Jim stopped (exit {proc.wait()}) at {time.strftime('%H:%M:%S')}")
+        code = proc.wait()
+        why = f"signal {signal.Signals(-code).name}" if code < 0 else f"exit {code}"
+        self.log.append(f"--- Jim stopped ({why}) at {time.strftime('%H:%M:%S')}")
 
     def stop(self, pid=None):
         """Stop Jim (he unloads his chat model on the way out); pid = a copy started elsewhere."""
@@ -326,6 +329,77 @@ class Jim:
 
 
 jim = Jim()
+
+
+# ---------------------------------------------------------------- network health (every 5 s)
+NET = {}                                          # name -> {ok, ms, detail, history: [ms or None, ...]}
+NET_EVERY_S = 5
+
+
+def timed(fn):
+    t = time.time()
+    try:
+        detail = fn()
+        return True, round((time.time() - t) * 1000), detail
+    except Exception as e:
+        return False, None, type(e).__name__ if not isinstance(e, ValueError) else str(e)
+
+
+def fail(msg):
+    raise ValueError(msg)
+
+
+def get_json(url, timeout=3):
+    with urllib.request.urlopen(url, timeout=timeout) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def check_network():
+    import socket
+    cfg = load_config()
+    checks = {}
+    source = cfg.get("camera_source", "auto")
+    if source == "usb":
+        dev = cfg.get("usb_camera", "/dev/video0")
+        checks["Camera"] = lambda: f"USB webcam {dev}" if os.path.exists(dev) else fail(f"{dev} missing")
+    elif source != "none":
+        ip = camera_settings()["ip"]
+
+        def cam():
+            if not ip:
+                raise ValueError("not set up")
+            socket.create_connection((ip, 554), timeout=3).close()
+            return f"security camera {ip} (RTSP port)"
+        checks["Camera"] = cam
+    if cfg.get("wled"):
+        def wled():
+            d = get_json(f"http://{cfg['wled']}/json/info")
+            w, l = d.get("wifi", {}), d.get("leds", {})
+            return (f"Wi-Fi {w.get('signal', '?')}% ({w.get('rssi', '?')} dBm) · LEDs {l.get('fps', '?')} fps",
+                    {"wifi": w.get("signal"), "rssi": w.get("rssi"), "led_fps": l.get("fps")})
+        checks["LED controller"] = wled
+    speech = cfg.get("speech_url", "http://127.0.0.1:7895").rstrip("/")
+    checks["Speech service"] = lambda: "voice + hearing" if get_json(speech + "/health").get("ok") else fail("not ok")
+    ollama = cfg.get("ollama_url", "http://localhost:11434").rstrip("/")
+    checks["Ollama (brain)"] = lambda: "version " + get_json(ollama + "/api/version").get("version", "?")
+    for name, fn in checks.items():
+        ok, ms, detail = timed(fn)
+        detail, extra = detail if isinstance(detail, tuple) else (detail, {})
+        old = NET.get(name, {})
+        NET[name] = {"ok": ok, "ms": ms, "detail": detail, "extra": extra, "t": round(time.time()),
+                     "history": (old.get("history") or [])[-71:] + [ms],                 # 6 minutes at 5 s
+                     "extra_history": {k: (old.get("extra_history", {}).get(k) or [])[-71:] + [v] for k, v in extra.items()}}
+    for gone in set(NET) - set(checks):
+        NET.pop(gone, None)
+
+
+def network_loop():
+    while True:
+        try:
+            check_network()
+        except Exception:
+            pass
+        time.sleep(NET_EVERY_S)
 
 
 # ---------------------------------------------------------------- recordings
@@ -369,7 +443,10 @@ class Panel(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):   # the page went away mid-reply
+            pass
 
     def body(self):
         n = int(self.headers.get("Content-Length") or 0)
@@ -393,6 +470,8 @@ class Panel(BaseHTTPRequestHandler):
             return self.proxy(path[4:])
         if path == "/api/status":
             return self.send(200, jim.status())
+        if path == "/api/network":
+            return self.send(200, {"every_s": NET_EVERY_S, "checks": NET})
         if path == "/api/settings":
             opts, cfg = options(), load_config()
             tabs = {tab: [{"title": t, "fields": [dict(opts[k], name=k, value=cfg.get(k, opts[k]["default"]), long=k in LONG, pick=PICK.get(k))
@@ -484,6 +563,7 @@ if __name__ == "__main__":
 
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(sig, bye)
+    threading.Thread(target=network_loop, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", A.port), Panel)
     server.daemon_threads = True
     print(f"Jim's control panel: http://127.0.0.1:{A.port}  (Ctrl+C stops the panel and Jim)")

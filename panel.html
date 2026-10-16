@@ -12,7 +12,7 @@ header h1{font-size:18px;margin:0;margin-right:auto}
 nav{display:flex;gap:4px;overflow-x:auto;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--card)}
 nav button{border:0;background:none;color:var(--mute);font:inherit;padding:7px 12px;border-radius:8px;cursor:pointer;white-space:nowrap}
 nav button.on{background:var(--chip);color:var(--ink);font-weight:600}
-main{max-width:1100px;margin:0 auto;padding:16px}
+main{max-width:1100px;margin:0 auto;padding:16px}main:has(#tab-live.on){max-width:1700px}
 .tab{display:none}.tab.on{display:block}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:16px;min-width:0}
@@ -40,7 +40,34 @@ pre.console{margin:0;max-height:300px;overflow:auto;font:12px/1.4 ui-monospace,m
 .entry{display:grid;grid-template-columns:minmax(0,220px) 1fr;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
 .entry img{width:100%;border-radius:6px}.entry audio{width:100%;height:36px;margin-top:4px}
 .kind{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent)}
-.muted{color:var(--mute)}.bars{display:flex;align-items:flex-end;gap:1px;height:50px;margin-top:8px}.bars i{flex:1;background:var(--ok);min-height:1px}
+.muted{color:var(--mute)}
+.dash{--g-bg:#111217;--g-panel:#181b1f;--g-line:#2c3235;--g-text:#ccccdc;--g-mute:#8e8e9a;--g-green:#73bf69;--g-yellow:#fade2a;--g-red:#f2495c;--g-blue:#5794f2;--g-orange:#ff9830;--g-purple:#b877d9;
+ background:var(--g-bg);color:var(--g-text);border-radius:12px;padding:10px;margin-bottom:16px;font-family:Inter,system-ui,sans-serif}
+.dhead{display:flex;justify-content:space-between;align-items:center;padding:2px 4px 10px;font-weight:600}.dash .sub{color:var(--g-mute);font-weight:400;font-size:12px}
+.dgrid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:8px;grid-auto-flow:row dense}
+.dp{background:var(--g-panel);border:1px solid var(--g-line);border-radius:4px;padding:6px 10px 8px;position:relative;overflow:hidden;min-width:0;display:flex;flex-direction:column}
+.dp.dragging{opacity:.35}.dp.over-before{box-shadow:-3px 0 0 var(--g-blue)}.dp.over-after{box-shadow:3px 0 0 var(--g-blue)}
+.dt{font-size:13px;font-weight:500;color:var(--g-text);margin:0 -10px 4px;padding:0 10px 2px;cursor:grab;display:flex;align-items:center;gap:6px;user-select:none;position:relative;z-index:2}
+.dt:hover{background:rgba(255,255,255,.03)}.dt .x{margin-left:auto;border:0;background:none;color:var(--g-mute);font-size:16px;line-height:1;cursor:pointer;padding:2px 4px;border-radius:3px;visibility:hidden}
+.dp:hover .dt .x{visibility:visible}.dt .x:hover{color:var(--g-text);background:#2c3235}
+.rs{position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;z-index:3;background:linear-gradient(135deg,transparent 50%,#5a6066 50%,#5a6066 60%,transparent 60%,transparent 72%,#5a6066 72%,#5a6066 82%,transparent 82%)}
+.dp.resizing{outline:1px dashed var(--g-blue)}
+.dtools{display:flex;gap:6px;align-items:center}.dtools select,.dbtn{background:#22252b;color:var(--g-text);border:1px solid var(--g-line);border-radius:4px;font:inherit;font-size:12px;padding:4px 8px;width:auto;cursor:pointer}
+.scroll{overflow:auto;flex:1;min-height:0}
+.dash .media{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px}.dash img.view{flex:1;min-height:0;aspect-ratio:auto;object-fit:contain;background:#0b0c0e;border-radius:3px}
+.dash .meter{background:#22252b}.dash ul.log{max-height:none}.dash ul.log li{border-top-color:#22252b;color:var(--g-text)}
+.dash pre.console{max-height:none;background:#0b0c0e;color:#b7c0c8;margin:0}.dash .verdict{margin:0}.dash .yes{color:var(--g-green)}.dash .no{color:var(--g-mute)}.dash .err{color:var(--g-red)}
+@media (max-width:700px){.dp{grid-column:1/-1 !important}.rs{display:none}}
+.dv{font-size:34px;font-weight:600;line-height:1.15;font-variant-numeric:tabular-nums;position:relative;z-index:1;color:var(--g-mute)}
+.ds{font-size:11px;color:var(--g-mute);position:relative;z-index:1}
+svg.dsp{position:absolute;left:0;right:0;bottom:0;width:100%;height:46%;opacity:.9}
+.gauge{height:8px;border-radius:4px;background:#22252b;margin-top:8px;overflow:hidden}.gauge i{display:block;height:100%;width:0;background:var(--g-green);transition:width .4s}
+.chart{flex:1;min-height:80px;position:relative;display:flex;flex-direction:column}.chart svg{flex:1;min-height:0}.chart svg{display:block;width:100%}
+.chart text{fill:var(--g-mute);font-size:10px;font-family:inherit}.chart .grid line{stroke:#2c3235;stroke-width:1}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--g-mute);margin-top:4px}.legend i{display:inline-block;width:10px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+table.dtab{width:100%;border-collapse:collapse;font-size:12px}table.dtab th{color:var(--g-blue);font-weight:500;text-align:left;padding:5px 6px;border-bottom:1px solid var(--g-line)}
+table.dtab td{padding:6px;border-bottom:1px solid #22252b;font-variant-numeric:tabular-nums}
+.up,.down{font-weight:600;border-radius:3px;padding:1px 6px;font-size:11px}.up{background:rgba(115,191,105,.18);color:var(--g-green)}.down{background:rgba(242,73,92,.18);color:var(--g-red)}
 @media (max-width:560px){.entry{grid-template-columns:1fr}}
 </style></head><body>
 <header><h1>🎃 Jim</h1><span id="pill" class="pill">…</span>
@@ -50,17 +77,29 @@ pre.console{margin:0;max-height:300px;overflow:auto;font:12px/1.4 ui-monospace,m
 <main>
 <section class="tab" id="tab-live">
  <div id="others" class="card" style="display:none"></div>
- <div class="grid">
-  <div class="card"><h2>Live camera</h2><img class="view" id="live" alt=""><div class="muted" id="liveNote">Jim isn't running.</div></div>
-  <div class="card"><h2>Last frame Jim judged</h2><img class="view" id="judged" alt=""><div class="verdict" id="verdict"></div></div>
+ <div class="dash" id="dash">
+  <div class="dhead"><span>📊 Jim · metrics <span class="sub" id="dashClock"></span></span>
+   <span class="dtools"><select id="dAdd"><option value="">＋ Add panel</option></select><button class="dbtn" id="dReset" title="put every panel back">Reset layout</button></span></div>
+  <div class="dgrid" id="dgrid">
+   <div class="dp" data-id="first_word" data-stat="first_word" data-w="2" data-h="130"><div class="dt">First word</div><div class="dv">—</div><div class="ds">kid stops → Jim speaks · median</div><svg class="dsp"></svg></div>
+   <div class="dp" data-id="think" data-stat="think" data-w="2" data-h="130"><div class="dt">Thinking</div><div class="dv">—</div><div class="ds">first sentence · median</div><svg class="dsp"></svg></div>
+   <div class="dp" data-id="hear" data-stat="hear" data-w="2" data-h="130"><div class="dt">Hearing</div><div class="dv">—</div><div class="ds">speech → text · median</div><svg class="dsp"></svg></div>
+   <div class="dp" data-id="vision" data-stat="vision" data-w="2" data-h="130"><div class="dt">Camera roast</div><div class="dv">—</div><div class="ds">at wake-up · median</div><svg class="dsp"></svg></div>
+   <div class="dp" data-id="fps" data-stat="fps" data-w="2" data-h="130"><div class="dt">Camera stream</div><div class="dv">—</div><div class="ds">frames / s</div><svg class="dsp"></svg></div>
+   <div class="dp" data-id="wifi" data-stat="wifi" data-w="2" data-h="130"><div class="dt">LED Wi-Fi</div><div class="dv">—</div><div class="ds">signal</div><div class="gauge"><i></i></div></div>
+   <div class="dp" data-id="hearing" data-w="6" data-h="130"><div class="dt">Hearing</div><div class="meter"><i id="lvl"></i><b id="thr"></b></div><div class="ds" id="lvlText" style="margin-top:6px">—</div></div>
+   <div class="dp" data-id="state" data-w="6" data-h="130"><div class="dt">State</div><div class="dv" id="stateText" style="font-size:22px">—</div></div>
+   <div class="dp" data-id="live" data-w="6" data-h="360"><div class="dt">Live camera</div><div class="media"><img class="view" id="live" alt=""><div class="ds" id="liveNote">Jim isn't running.</div></div></div>
+   <div class="dp" data-id="judged" data-w="6" data-h="360"><div class="dt">Last frame Jim judged</div><div class="media"><img class="view" id="judged" alt=""><div class="verdict" id="verdict"></div></div></div>
+   <div class="dp" data-id="resp" data-w="6" data-h="270"><div class="dt">Response times <span class="sub">· per reply, seconds</span></div><div class="chart" id="chResp"></div></div>
+   <div class="dp" data-id="net" data-w="6" data-h="270"><div class="dt">Network latency <span class="sub">· ms, last 6 min</span></div><div class="chart" id="chNet"></div></div>
+   <div class="dp" data-id="mic" data-w="6" data-h="270"><div class="dt">Mic level <span class="sub">· last 2 min · dashed = Jim reacts above</span></div><div class="chart" id="chMic"></div></div>
+   <div class="dp" data-id="services" data-w="6" data-h="270"><div class="dt">Services</div><div class="scroll"><table class="dtab"><thead><tr><th>Service</th><th>Status</th><th>Latency</th><th>Detail</th></tr></thead><tbody id="mNet"></tbody></table></div></div>
+   <div class="dp" data-id="events" data-w="6" data-h="320"><div class="dt">What happened</div><div class="scroll"><ul class="log" id="events"></ul></div></div>
+   <div class="dp" data-id="console" data-w="6" data-h="320"><div class="dt">Console</div><pre class="console scroll" id="console"></pre></div>
+  </div>
  </div>
- <div class="grid">
-  <div class="card"><h2>Hearing</h2><div class="meter"><i id="lvl"></i><b id="thr"></b></div>
-   <div class="muted" id="lvlText" style="margin-top:6px">—</div></div>
-  <div class="card"><h2>State</h2><div id="stateText" class="muted">—</div></div>
  </div>
- <div class="card"><h2>What happened</h2><ul class="log" id="events"></ul></div>
- <div class="card"><h2>Console</h2><pre class="console" id="console"></pre></div>
 </section>
 <section class="tab" id="tab-camera">
  <div class="grid">
@@ -211,9 +250,10 @@ function meter(i, b, t, mic) {
 }
 async function pollLive() {
   try { status = await (await api("/api/status")).json(); paintStatus() } catch (e) {}
-  if (!status.running) return;
+  if (!status.running) { lastJim = null; sample(null); paintDash(); return }
   try {
     const d = await (await api("/jim/events.json")).json();
+    lastJim = d; sample(d); paintDash();
     $("stateText").textContent = d.state + (d.snooze_left ? ` · snoozing ${d.snooze_left} s` : "") + (d.recording ? " · recording" : "");
     if (d.mic) { meter("lvl", "thr", "lvlText", d.mic); meter("lvl2", "thr2", "lvlText2", d.mic) }
     if (d.judged_at && d.judged_at !== judgedAt) { judgedAt = d.judged_at; $("judged").src = "/jim/judged.jpg?" + judgedAt }
@@ -225,6 +265,140 @@ async function pollLive() {
 }
 setInterval(pollLive, 1000);
 setInterval(() => { if (status.running && $("tab-live").classList.contains("on")) $("live").src = "/jim/live.jpg?" + Date.now() }, 600);
+
+// ---- metrics dashboard (Grafana-style; plain SVG)
+const G = {green: "#73bf69", yellow: "#fade2a", red: "#f2495c", blue: "#5794f2", orange: "#ff9830", purple: "#b877d9", mute: "#8e8e9a"};
+const fmtS = v => v == null ? "—" : v >= 1 ? v.toFixed(2) + " s" : Math.round(v * 1000) + " ms";
+const median = a => { const b = a.filter(v => v != null).sort((x, y) => x - y); return b.length ? (b.length % 2 ? b[(b.length - 1) / 2] : (b[b.length / 2 - 1] + b[b.length / 2]) / 2) : null };
+// thresholds: [green below, yellow below]; else red. "up" = bigger is better
+const STAT = {first_word: {t: [1.5, 3]}, think: {t: [1, 2.5]}, hear: {t: [0.5, 1.5]}, vision: {t: [2, 4]},
+              fps: {t: [1, 0.5], up: true}, wifi: {t: [60, 35], up: true}};
+const color = (k, v) => { if (v == null) return G.mute; const [a, b] = STAT[k].t; return STAT[k].up ? (v >= a ? G.green : v >= b ? G.yellow : G.red) : (v < a ? G.green : v < b ? G.yellow : G.red) };
+function sparkArea(svg, vals, col) {
+  const v = vals.filter(x => x != null); if (v.length < 2) { svg.innerHTML = ""; return }
+  const hi = Math.max(...v), lo = Math.min(...v, 0), n = vals.length;
+  const pts = vals.map((x, i) => x == null ? null : [i / (n - 1) * 100, 40 - (x - lo) / (hi - lo || 1) * 36]).filter(Boolean);
+  const line = pts.map(p => p.join(",")).join(" ");
+  svg.setAttribute("viewBox", "0 0 100 40"); svg.setAttribute("preserveAspectRatio", "none");
+  svg.innerHTML = `<polygon points="${pts[0][0]},40 ${line} ${pts.at(-1)[0]},40" fill="${col}" opacity=".18"/><polyline points="${line}" fill="none" stroke="${col}" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`;
+}
+function stat(k, value, text, series) {
+  const p = document.querySelector(`[data-stat="${k}"]`), col = color(k, value);
+  p.querySelector(".dv").textContent = text; p.querySelector(".dv").style.color = col;
+  const sv = p.querySelector("svg.dsp"); if (sv) sparkArea(sv, series || [], col);
+  const g = p.querySelector(".gauge i"); if (g) { g.style.width = (value || 0) + "%"; g.style.background = col }
+}
+const nice = v => { const e = Math.pow(10, Math.floor(Math.log10(v || 1))), f = v / e; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * e };
+// series: [{name, color, values (y or null), dash}], x: 0..n-1 spread evenly; xlabels: [left, right]
+function chart(el, series, {unit = "", xlabels = ["", ""], floor0 = true} = {}) {
+  const W = el.clientWidth || 400, H = Math.max(60, (el.clientHeight || 190) - 22), L = 38, R = 8, T = 8, B = 18, w = W - L - R, h = H - T - B;
+  const all = series.flatMap(s => s.values).filter(v => v != null);
+  if (!all.length) { el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="height:${H}px"><text x="${W / 2}" y="${H / 2}" text-anchor="middle">No data yet</text></svg>`; return }
+  const top = nice(Math.max(...all) * 1.1), lo = floor0 ? 0 : Math.min(...all), ticks = 4;
+  const y = v => T + h - (v - lo) / (top - lo || 1) * h;
+  let g = `<g class="grid">`;
+  for (let i = 0; i <= ticks; i++) { const v = lo + (top - lo) * i / ticks, yy = y(v);
+    g += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}"/><text x="${L - 5}" y="${yy + 3}" text-anchor="end">${+v.toFixed(2)}${unit}</text>` }
+  g += `</g><text x="${L}" y="${H - 4}">${xlabels[0]}</text><text x="${W - R}" y="${H - 4}" text-anchor="end">${xlabels[1]}</text>`;
+  for (const s of series) {
+    const n = s.values.length; if (!n) continue;
+    const x = i => L + (n > 1 ? i / (n - 1) * w : w);
+    let path = "", pen = false;
+    s.values.forEach((v, i) => { if (v == null) { pen = false; return } path += (pen ? "L" : "M") + x(i).toFixed(1) + "," + y(v).toFixed(1); pen = true });
+    if (s.fill && path) g += `<path d="${path}L${x(n - 1)},${T + h}L${x(s.values.findIndex(v => v != null))},${T + h}Z" fill="${s.color}" opacity=".12"/>`;
+    g += `<path d="${path}" fill="none" stroke="${s.color}" stroke-width="1.6" ${s.dash ? 'stroke-dasharray="4 3"' : ""}/>`;
+    if (n < 25) s.values.forEach((v, i) => { if (v != null) g += `<circle cx="${x(i)}" cy="${y(v)}" r="2.2" fill="${s.color}"/>` });
+  }
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="height:${H}px">${g}</svg><div class="legend">${series.map(s => {
+    const last = s.values.filter(v => v != null).at(-1); return `<span><i style="background:${s.color}"></i>${esc(s.name)}${last != null ? ` <b style="color:#ccccdc">${+last.toFixed(2)}${unit}</b>` : ""}</span>` }).join("")}</div>`;
+}
+const live = {mic: [], thr: [], fps: []};      // 1-second samples kept in the page (2 minutes)
+let lastJim = null, net = {};
+function paintDash() {
+  const m = lastJim?.metrics || {}, cam = status.running ? lastJim?.camera : null;
+  for (const k of ["first_word", "think", "hear", "vision"]) { const a = m[k] || []; stat(k, median(a), fmtS(median(a)), a) }
+  stat("fps", cam ? cam.fps : null, cam ? cam.fps.toFixed(1) : "—", live.fps);
+  const led = net["LED controller"]?.extra || {};
+  stat("wifi", led.wifi ?? null, led.wifi != null ? led.wifi + "%" : "—");
+  const n = Math.max(0, ...["hear", "think", "first_word"].map(k => (m[k] || []).length));
+  chart($("chResp"), [["first_word", "first word", G.green], ["think", "thinking", G.yellow], ["hear", "hearing", G.blue]]
+    .map(([k, name, color]) => ({name, color, values: m[k] || []})), {unit: "s", xlabels: n ? [`reply ${Math.max(1, n - 29)}`, `reply ${n}`] : ["", ""]});
+  const cols = [G.blue, G.orange, G.purple, G.green];
+  chart($("chNet"), Object.entries(net).map(([name, c], i) => ({name, color: cols[i % 4], values: c.history})), {unit: "", xlabels: ["-6 min", "now"]});
+  chart($("chMic"), [{name: "loudness", color: G.green, values: live.mic, fill: true}, {name: "Jim reacts above", color: G.red, values: live.thr, dash: true}],
+    {xlabels: ["-2 min", "now"]});
+  $("mNet").innerHTML = Object.entries(net).map(([name, c]) => `<tr><td>${esc(name)}</td><td><span class="${c.ok ? "up" : "down"}">${c.ok ? "UP" : "DOWN"}</span></td>
+    <td style="color:${c.ms == null ? G.red : c.ms < 50 ? G.green : c.ms < 250 ? G.yellow : G.red}">${c.ms == null ? "—" : c.ms + " ms"}</td><td style="color:#8e8e9a">${esc(c.detail)}</td></tr>`).join("")
+    + (cam ? `<tr><td>Camera stream</td><td><span class="${cam.age_s != null && cam.age_s < 3 ? "up" : "down"}">${cam.age_s != null && cam.age_s < 3 ? "UP" : "STALE"}</span></td>
+    <td>${cam.fps} fps</td><td style="color:#8e8e9a">newest frame ${cam.age_s ?? "—"} s old · ${cam.reconnects} reconnects</td></tr>` : "")
+    || `<tr><td colspan="4" style="color:#8e8e9a">Checking…</td></tr>`;
+  $("dashClock").textContent = new Date().toLocaleTimeString() + (status.running ? "" : " · Jim isn't running");
+}
+function sample(d) {
+  const push = (k, v) => { live[k].push(v); if (live[k].length > 120) live[k].shift() };
+  push("mic", d?.mic ? d.mic.level : null); push("thr", d?.mic ? d.mic.thresh : null); push("fps", d?.camera ? d.camera.fps : null);
+}
+async function pollNet() { try { net = (await (await api("/api/network")).json()).checks; paintDash() } catch (e) {} }
+setInterval(pollNet, 5000); pollNet();
+addEventListener("resize", () => paintDash());
+
+// ---- dashboard layout: drag panels by their title, resize from the corner, close with ×. Remembered in this browser.
+const grid = $("dgrid"), PANELS = [...grid.children].map(p => ({id: p.dataset.id, w: +p.dataset.w, h: +p.dataset.h}));
+const panel = id => grid.querySelector(`[data-id="${id}"]`);
+let layout;
+function loadLayout() {
+  let saved = null; try { saved = JSON.parse(localStorage.getItem("jimDash") || "null") } catch (e) {}
+  const known = new Set(PANELS.map(p => p.id));
+  layout = (saved || []).filter(p => known.has(p.id));
+  for (const p of PANELS) if (!layout.some(l => l.id === p.id)) layout.push({...p});   // panels added since
+}
+function saveLayout() { try { localStorage.setItem("jimDash", JSON.stringify(layout)) } catch (e) {} }
+function applyLayout() {
+  for (const l of layout) {
+    const el = panel(l.id); grid.appendChild(el);                     // order = layout order
+    el.style.gridColumn = `span ${l.w}`; el.style.height = l.h + "px"; el.style.display = l.hidden ? "none" : "";
+  }
+  const hidden = layout.filter(l => l.hidden);
+  $("dAdd").innerHTML = `<option value="">＋ Add panel${hidden.length ? ` (${hidden.length})` : ""}</option>` +
+    hidden.map(l => `<option value="${l.id}">${esc(panel(l.id).querySelector(".dt").firstChild.textContent.trim())}</option>`).join("");
+  $("dAdd").disabled = !hidden.length;
+  paintDash();
+}
+for (const el of grid.children) {
+  const head = el.querySelector(".dt");
+  head.insertAdjacentHTML("beforeend", `<button class="x" title="close this panel">×</button>`);
+  el.insertAdjacentHTML("beforeend", `<div class="rs" title="drag to resize"></div>`);
+  head.querySelector(".x").onclick = () => { layout.find(l => l.id === el.dataset.id).hidden = true; saveLayout(); applyLayout() };
+  head.addEventListener("pointerdown", e => { if (!e.target.closest(".x")) el.draggable = true });
+  el.addEventListener("dragstart", e => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", el.dataset.id); el.classList.add("dragging") });
+  el.addEventListener("dragend", () => { el.draggable = false; el.classList.remove("dragging"); grid.querySelectorAll(".over-before,.over-after").forEach(x => x.classList.remove("over-before", "over-after")) });
+  el.addEventListener("dragover", e => {
+    e.preventDefault(); const r = el.getBoundingClientRect(), after = e.clientX > r.left + r.width / 2;
+    el.classList.toggle("over-after", after); el.classList.toggle("over-before", !after);
+  });
+  el.addEventListener("dragleave", () => el.classList.remove("over-before", "over-after"));
+  el.addEventListener("drop", e => {
+    e.preventDefault(); const from = e.dataTransfer.getData("text/plain"), after = el.classList.contains("over-after");
+    if (!from || from === el.dataset.id) return;
+    const moving = layout.splice(layout.findIndex(l => l.id === from), 1)[0];
+    layout.splice(layout.findIndex(l => l.id === el.dataset.id) + (after ? 1 : 0), 0, moving);
+    saveLayout(); applyLayout();
+  });
+  el.querySelector(".rs").addEventListener("pointerdown", e => {
+    e.preventDefault(); e.stopPropagation();
+    const l = layout.find(x => x.id === el.dataset.id), col = (grid.clientWidth + 8) / 12, sx = e.clientX, sy = e.clientY, w0 = l.w, h0 = l.h;
+    el.classList.add("resizing"); el.setPointerCapture(e.pointerId);
+    const move = ev => {
+      l.w = Math.max(2, Math.min(12, Math.round(w0 + (ev.clientX - sx) / col))); l.h = Math.max(100, Math.min(900, Math.round((h0 + ev.clientY - sy) / 10) * 10));
+      el.style.gridColumn = `span ${l.w}`; el.style.height = l.h + "px"; paintDash();
+    };
+    const up = () => { el.classList.remove("resizing"); el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); saveLayout() };
+    el.addEventListener("pointermove", move); el.addEventListener("pointerup", up);
+  });
+}
+$("dAdd").onchange = e => { const l = layout.find(x => x.id === e.target.value); if (l) { l.hidden = false; saveLayout(); applyLayout() } };
+$("dReset").onclick = () => { layout = PANELS.map(p => ({...p})); saveLayout(); applyLayout() };
+loadLayout(); applyLayout();
 
 // ---- camera
 $("camSave").onclick = async () => {
