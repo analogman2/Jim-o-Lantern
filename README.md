@@ -132,7 +132,10 @@ banter: after one speaks, the other may tease him or pile on the costume roast (
 and how many lines in a row before the kids get a turn). Only one pumpkin talks at a time, and nobody listens while a
 pumpkin talks, so they never mistake each other's voices for a kid. They wake up together; the first Jim in the list
 greets and answers the kids, unless a kid says the other one's name. If a kid sounds scared, both go gentle and the
-banter stops. Give each Jim his own name: a second Jim is still a grumpy Jim-o'-lantern, just called something else.
+banter stops. Each pumpkin has a **personality** (Replies tab, or when adding him): **Jim**, the furious, grumpy
+Jim-o'-lantern, or **Chris**, his fabulous, flamboyant neighbor who roasts costumes like a loving fashion critic and
+teases Jim about his frown lines. Each comes with his own voice, greetings and goodbyes, and the same kid-safety rules.
+Hear Chris: [`samples/chris_demo.wav`](samples/chris_demo.wav).
 **Type to Jim** on the Live tab says something to him as if a kid had.
 
 Camera, mic and speaker changes apply while Jim runs; voice and personality changes need a restart.

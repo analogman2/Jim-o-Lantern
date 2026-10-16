@@ -217,9 +217,11 @@ table.dtab td{padding:6px;border-bottom:1px solid #22252b;font-variant-numeric:t
 </section>
 </main>
 <div class="modal" id="addJim"><div class="card"><h2>Add a Jim</h2>
- <div class="field"><label>Name</label><input type="text" id="ajName" placeholder="Jim 2"></div>
+ <div class="field"><label>Name</label><input type="text" id="ajName" placeholder="Chris"></div>
+ <div class="field"><label>Personality</label><select id="ajPersona"><option value="chris">Chris: fabulous, flamboyant, a loving fashion critic</option>
+  <option value="jim">Jim: furious, grumpy, an insult comic</option></select><div class="help">Each comes with his own voice, greetings and goodbyes.</div></div>
  <div class="field"><label>His LED controller's IP address</label><input type="text" id="ajWled" placeholder="10.0.1.160"><div class="help">Each Jim needs his own LED curtain and controller.</div></div>
- <div class="field"><label><input type="checkbox" id="ajCopy" checked> Copy the voice, personality and timing of <span id="ajFrom"></span></label>
+ <div class="field"><label><input type="checkbox" id="ajCopy" checked> Copy the timing and reply settings of <span id="ajFrom"></span></label>
   <div class="help">He starts blind, with his LED controller's mic and the default speaker: pick his camera, mic and speaker on the Camera and Audio tabs.</div></div>
  <div class="row"><button class="b go" id="ajCreate">Add</button><button class="b" id="ajCancel">Cancel</button><span style="flex:1"></span><button class="b" id="jimRemove">Remove the selected Jim…</button></div></div></div>
 <div class="toast" id="toast"><span id="toastText"></span><button class="b" id="toastBtn" style="display:none">Restart Jim</button></div>
@@ -264,7 +266,7 @@ $("jimAdd").onclick = () => { $("ajFrom").textContent = JIMLIST.find(j => j.id =
 $("ajCancel").onclick = () => { $("addJim").style.display = "none" };
 $("ajCreate").onclick = async () => {
   try {
-    const d = await (await post("/api/jims", {name: $("ajName").value, wled: $("ajWled").value, copy_from: $("ajCopy").checked ? JIM : null})).json();
+    const d = await (await post("/api/jims", {name: $("ajName").value, wled: $("ajWled").value, copy_from: $("ajCopy").checked ? JIM : null, personality: $("ajPersona").value})).json();
     $("addJim").style.display = "none"; $("ajName").value = ""; $("ajWled").value = "";
     await selectJim(d.jim.id); toast(`${d.jim.name} added. Pick his camera, mic and speaker, then press Start.`);
   } catch (e) { toast("Not added: " + e.message) }

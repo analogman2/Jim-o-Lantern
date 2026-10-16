@@ -66,7 +66,7 @@ GROUPS = {
     "mic": [],                                   # saved mics (MICS_FILE) set mic, min_rms, vad_ratio, silence, wled_gain
     "voice": [("Voice", ["voice_design", "gentle_voice_design", "pitch", "intonation", "echo", "grit", "lip_offset"]),
               ("Engine", ["tts", "speech_url"])],
-    "responses": [("Personality", ["house", "temperature", "max_words"]),
+    "responses": [("Personality", ["personality", "house", "temperature", "max_words"]),
                   ("Brain", ["brain", "ollama_model", "ollama_url", "keep_loaded"]),
                   ("Timing", ["reset_after", "eyes_timeout", "snooze", "start_delay"]),
                   ("Two Jims (with another Jim beside him)", ["banter", "banter_max"]),
@@ -525,7 +525,7 @@ def jims_summary():
 DEVICE_KEYS = ("wled", "mic", "speaker", "camera_id", "camera_source", "usb_camera")
 
 
-def add_jim(name, wled, copy_from=None):
+def add_jim(name, wled, copy_from=None, personality="jim"):
     """A new Jim: his own settings file (a copy of another Jim's, without that Jim's devices), recordings folder and
     viewer port. He starts blind, with the LED controller's mic and the default speaker, until you pick his devices."""
     name = str(name or "").strip()[:30] or "Jim 2"
@@ -540,9 +540,11 @@ def add_jim(name, wled, copy_from=None):
     path.parent.mkdir(exist_ok=True)
     src = next((i for i in ins if i["id"] == copy_from), None)
     path.write_text(config_path(src).read_text() if src else "# Settings for this Jim (the control panel edits this file)\n")
+    persona = P.PERSONALITIES.get(personality) or P.PERSONALITIES["jim"]
     with as_jim(new):
         write_settings({"wled": wled, "mic": "wled", "speaker": "default", "camera_id": "", "camera_source": "none",
-                        "record_dir": f"recordings-{new['id']}"})
+                        "record_dir": f"recordings-{new['id']}", "personality": personality if personality in P.PERSONALITIES else "jim",
+                        "voice_design": persona["voice"], "gentle_voice_design": persona["gentle_voice"]})
     write_private(INSTANCES_FILE, ins + [new])
     return new
 
@@ -1041,7 +1043,7 @@ class Panel(BaseHTTPRequestHandler):
         try:
             b = self.body()
             if path == "/api/jims":
-                return self.send(200, {"jim": add_jim(b.get("name"), str(b.get("wled") or "").strip(), b.get("copy_from"))})
+                return self.send(200, {"jim": add_jim(b.get("name"), str(b.get("wled") or "").strip(), b.get("copy_from"), b.get("personality") or "jim")})
             if path in ("/api/jim/start", "/api/jim/stop", "/api/jim/restart"):
                 if path.endswith(("stop", "restart")):
                     cur_jim().stop(b.get("pid"))
@@ -1084,6 +1086,10 @@ class Panel(BaseHTTPRequestHandler):
                         vals[k] = coerce(opts[k], v)
                     except (TypeError, ValueError) as e:
                         raise ValueError(f"{k}: {e}")
+                if "personality" in vals:            # a new personality comes with its own voice
+                    persona = P.PERSONALITIES[vals["personality"]]
+                    vals.setdefault("voice_design", persona["voice"])
+                    vals.setdefault("gentle_voice_design", persona["gentle_voice"])
                 write_settings(vals)
                 live_keys = {"camera_crop", "camera_source", "usb_camera"}
                 if set(vals) <= live_keys:

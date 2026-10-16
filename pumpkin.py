@@ -1565,6 +1565,75 @@ JACK_GENTLE_VOICE = ("A deep, slightly raspy old male voice, but warm, soft, slo
                      "like a gentle grandpa reassuring a frightened child.")
 TTS_VENVS = {"qwen": ".venv-qwentts", "chatterbox": ".venv-chatterbox"}
 
+# ---- Chris: the second pumpkin. Same safety rules as Jim, a completely different act.
+CHRIS_PROMPT = """You are Chris, a talking carved pumpkin sitting at the end of a driveway on Halloween night, \
+right next to your grumpy neighbor Jim the Jim-o'-lantern. Trick-or-treaters (mostly kids, sometimes parents) walk \
+up and talk to you, and your words are spoken aloud by a text-to-speech voice while your carved face glows.
+
+Who you are:
+- Your name is Chris. You are the most fabulous pumpkin on the whole street, and you know it. You are \
+flamboyant, theatrical and over the top: every visitor is a superstar on your runway and you are the judge. \
+You're proudly gay, and you're married to a very handsome butternut squash named Gary, who is always "away at the \
+farmers market".
+- You are pure, glittering enthusiasm. You gasp, you swoon, you clutch your stem, you call people "darling", \
+"sweetie" and "superstar", and you give out scores ("That cape? A ten! The plastic fangs? Darling, a solid four.").
+- You roast costumes like a loving fashion critic: a compliment and a roast in the same breath ("A ghost! Classic, \
+timeless, a sheet. Very minimalist. Very brave."). You ask "Who are you wearing?" and demand a little twirl or a \
+runway walk. Never roast anyone's body, looks, voice, family, or anything they can't change. Kids should feel like \
+stars, and laugh.
+- You glow because of confidence, not a candle. Beige is your nemesis. Candy corn is "the beige of candy". \
+Pumpkin spice is a horror story you refuse to discuss. Glitter is a food group.
+- You and Jim are old rivals and secretly best friends. You find his grumpiness tragic ("Jim, honey, frown lines on \
+a pumpkin? Tragic.") and you tease him about his face, his attitude and his name.
+- IMPORTANT: if a child says they're scared, shy, sad, or hurt, or starts to cry, completely drop the act for the \
+rest of that conversation. Become a warm, gentle, kind pumpkin: tell them they're very brave and look wonderful, \
+and invite them to take a treat. No teasing at all.
+
+How to talk:
+- Keep every reply short: one to three short sentences, under about 35 words. Kids are waiting for candy and \
+other kids are behind them.
+- Talk like a fabulous cartoon character: mix short exclamations ("Oh my gourd!", "Stop it!", "Iconic!", \
+"Gasp!", "Work it!") with questions and quick compliments, so your voice swoops up and down.
+- Plain spoken words only. No emojis, no asterisks, no stage directions, no lists, no markdown, and no words in \
+ALL CAPS (the voice spells them out). Show excitement with exclamation marks. Write numbers as words.
+- Your input is a speech-to-text transcript from a noisy driveway mic. It may be garbled, partial, or several kids \
+talking at once. Roll with it; if you truly can't tell, ask them to say it again, darling, with feeling.
+- Romance and dating are never a topic with the kids: Gary is just your husband, mentioned in passing.
+
+""" + SYSTEM_PROMPT[SYSTEM_PROMPT.index("Safety:"):]
+
+CHRIS_GREETINGS = [
+    "Oh my gourd, visitors! Hello, superstars! Let me see those costumes. Spin for me!",
+    "Gasp! Someone turned on the runway lights! Welcome, darlings, to the most fabulous driveway in town!",
+    "Stop it right now! Look at you! Okay, walk for me. Slowly. Let me judge.",
+    "Hello, gorgeous! I was resting my glow, but for you, darling, I am awake and sparkling!",
+    "Welcome, welcome! Don't mind Jim, he's grumpy. I'm Chris, and I'm the fun one.",
+    "Oh, finally, some fashion on this street! Who are you wearing?",
+    "Ding dong, the fabulous one is awake! Come closer, I need to see the details.",
+    "Darlings! You woke me from my beauty sleep, and honestly, worth it. Now, twirl!",
+    "Is that a costume or a statement? Either way, I'm obsessed. Come here!",
+    "Lights, camera, candy! Welcome to the runway, superstars. Show me what you've got!",
+]
+CHRIS_GOODBYES = [
+    "And that's a wrap, darlings! Chris needs his beauty sleep. Glow on!",
+    "Gone already? Fine, fine. Go sparkle somewhere else. I'll be here, being fabulous.",
+    "Exit, stage left! Mwah! Back to sleep for this gorgeous gourd.",
+    "Bye, superstars! Remember: confidence is the best costume. Goodnight!",
+    "The runway is closed! Chris is going dark. Fabulously.",
+]
+CHRIS_VOICE = ("A bright, expressive, theatrical adult male voice: flamboyant and fabulous, sing-song, with big "
+               "swoops in pitch, playful sass, dramatic gasps and pauses, warm and full of sparkle.")
+CHRIS_GENTLE_VOICE = ("A warm, soft, kind adult male voice, gentle and reassuring like a sweet uncle, slow, light "
+                      "and friendly.")
+
+# each personality: its name, prompt, wake-up greetings, goodbyes and voice descriptions
+PERSONALITIES = {
+    "jim": {"name": "Jim", "prompt": SYSTEM_PROMPT, "greetings": GREETINGS, "goodbyes": GOODBYES,
+            "voice": JACK_VOICE, "gentle_voice": JACK_GENTLE_VOICE},
+    "chris": {"name": "Chris", "prompt": CHRIS_PROMPT, "greetings": CHRIS_GREETINGS, "goodbyes": CHRIS_GOODBYES,
+              "voice": CHRIS_VOICE, "gentle_voice": CHRIS_GENTLE_VOICE},
+}
+
 
 def trim_clip(audio, rate):
     """Trim a TTS clip's leading/trailing silence, then leave a natural pause before the next one."""
@@ -1782,6 +1851,8 @@ def build_parser():
     p.add_argument("--effort", default="low", choices=["low", "medium", "high"],
                    help="Claude effort level (low = fastest replies)")
     p.add_argument("--jim-id", default="", help="this Jim's id in the control panel (the other Jims there are his partners)")
+    p.add_argument("--personality", default="jim", choices=list(PERSONALITIES),
+                   help="who this pumpkin is: jim = the furious, grumpy Jim-o'-lantern; chris = his fabulous, flamboyant neighbor")
     p.add_argument("--banter", type=float, default=0.6,
                    help="with another Jim beside him: how often he answers his partner's lines (0 = never, 1 = always)")
     p.add_argument("--banter-max", type=int, default=2,
@@ -1851,6 +1922,11 @@ def main():
         print(f"[config] {os.path.basename(config_file)}: ignoring unknown setting(s): {', '.join(unknown)}", file=sys.stderr)
     p.set_defaults(**{k: v for k, v in settings.items() if k in options})
     args = p.parse_args()
+    persona = PERSONALITIES[args.personality]
+    if args.voice_design == JACK_VOICE:              # not set by hand: this personality's voice
+        args.voice_design = persona["voice"]
+    if args.gentle_voice_design == JACK_GENTLE_VOICE:
+        args.gentle_voice_design = persona["gentle_voice"]
     if not args.wled:
         sys.exit("Set the WLED controller's address: wled = \"...\" in jim.toml "
                  "(copy jim.example.toml), or pass --wled.")
@@ -1923,7 +1999,9 @@ def main():
         brain = Brain(args.model, args.effort, args.house)
     brain.max_words = args.max_words
     brain.temperature = args.temperature
-    brain.system = with_name(brain.system, args.name)
+    brain.system = brain.system.replace(SYSTEM_PROMPT, persona["prompt"], 1)
+    if persona["name"] == "Jim":
+        brain.system = with_name(brain.system, args.name)
     voice.gentle_instruct = args.gentle_voice_design
     voice.volume = max(0.05, min(1.5, args.volume))
     if chatter and args.tts_model == "turbo":
@@ -2158,24 +2236,24 @@ def main():
         return os.path.join(cache_dir, hashlib.sha1((voice_id + text).encode()).hexdigest() + ".npy")
 
     greeting_audio = {}
-    for g in GREETINGS:
+    for g in persona["greetings"]:
         try:
             greeting_audio[g] = np.load(greeting_file(g))
         except (OSError, ValueError):
             pass
 
     def render_missing_greetings():
-        for g in GREETINGS:
+        for g in persona["greetings"]:
             if g not in greeting_audio:
                 audio = voice.synth(g)
                 np.save(greeting_file(g), audio)
                 greeting_audio[g] = audio
 
-    missing = len(GREETINGS) - len(greeting_audio)
+    missing = len(persona["greetings"]) - len(greeting_audio)
     if missing:
         print(f"Recording {missing} greeting(s) in the background (saved for next time)...")
         threading.Thread(target=render_missing_greetings, daemon=True).start()
-    greetings, goodbyes = shuffled_cycle(GREETINGS), shuffled_cycle(GOODBYES)
+    greetings, goodbyes = shuffled_cycle(persona["greetings"]), shuffled_cycle(persona["goodbyes"])
 
     if args.local_whisper:
         print("Loading speech recognition (Whisper in this process)...")
@@ -2292,7 +2370,7 @@ def main():
             voice.say(greeting)
         else:  # nobody visible, no camera, or too slow: a pre-written greeting
             greeting = next(greetings)
-            for _ in range(len(GREETINGS)):  # prefer one that's already recorded
+            for _ in range(len(persona["greetings"])):  # prefer one that's already recorded
                 if greeting in greeting_audio:
                     break
                 greeting = next(greetings)

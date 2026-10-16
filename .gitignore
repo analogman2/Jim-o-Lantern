@@ -17,6 +17,7 @@ firmware/*.wav
 # Scratch audio; only the demo clip is kept
 samples/*.wav
 !samples/jim_demo.wav
+!samples/chris_demo.wav
 
 # CAD environment
 .venv-cad/
