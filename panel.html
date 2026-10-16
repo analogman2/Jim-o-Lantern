@@ -55,7 +55,13 @@ pre.console{margin:0;max-height:300px;overflow:auto;font:12px/1.4 ui-monospace,m
 .dtools{display:flex;gap:6px;align-items:center}.dtools select,.dbtn{background:#22252b;color:var(--g-text);border:1px solid var(--g-line);border-radius:4px;font:inherit;font-size:12px;padding:4px 8px;width:auto;cursor:pointer}
 .scroll{overflow:auto;flex:1;min-height:0}
 .dash .media{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px}.dash img.view{flex:1;min-height:0;aspect-ratio:auto;object-fit:contain;background:#0b0c0e;border-radius:3px}
-.dash .meter{background:#22252b}.dash ul.log{max-height:none}.dash ul.log li{border-top-color:#22252b;color:var(--g-text)}
+.dash .meter{background:#22252b}
+.vmeter{flex:1;min-height:0;display:flex;gap:8px;padding:4px 0 2px}.vscale{position:relative;width:22px;font-size:10px;color:var(--g-mute)}
+.vscale span{position:absolute;right:0;transform:translateY(50%)}
+.vbar{position:relative;width:26px;border-radius:3px;overflow:hidden;background:linear-gradient(to top,#73bf69 0%,#73bf69 55%,#fade2a 78%,#f2495c 100%)}
+.vbar i{position:absolute;left:0;right:0;top:0;height:100%;background:#22252b;transition:height .12s linear}
+.vbar b{position:absolute;left:-2px;right:-2px;height:2px;background:#fff;box-shadow:0 0 0 1px #000}
+.vread{display:flex;flex-direction:column;justify-content:flex-end;min-width:0}.vread .dv{font-size:28px}.dash ul.log{max-height:none}.dash ul.log li{border-top-color:#22252b;color:var(--g-text)}
 .dash pre.console{max-height:none;background:#0b0c0e;color:#b7c0c8;margin:0}.dash .verdict{margin:0}.dash .yes{color:var(--g-green)}.dash .no{color:var(--g-mute)}.dash .err{color:var(--g-red)}
 @media (max-width:700px){.dp{grid-column:1/-1 !important}.rs{display:none}}
 .dv{font-size:34px;font-weight:600;line-height:1.15;font-variant-numeric:tabular-nums;position:relative;z-index:1;color:var(--g-mute)}
@@ -87,13 +93,16 @@ table.dtab td{padding:6px;border-bottom:1px solid #22252b;font-variant-numeric:t
    <div class="dp" data-id="vision" data-stat="vision" data-w="2" data-h="130"><div class="dt">Camera roast</div><div class="dv">—</div><div class="ds">at wake-up · median</div><svg class="dsp"></svg></div>
    <div class="dp" data-id="fps" data-stat="fps" data-w="2" data-h="130"><div class="dt">Camera stream</div><div class="dv">—</div><div class="ds">frames / s</div><svg class="dsp"></svg></div>
    <div class="dp" data-id="wifi" data-stat="wifi" data-w="2" data-h="130"><div class="dt">LED Wi-Fi</div><div class="dv">—</div><div class="ds">signal</div><div class="gauge"><i></i></div></div>
-   <div class="dp" data-id="hearing" data-w="6" data-h="130"><div class="dt">Hearing</div><div class="meter"><i id="lvl"></i><b id="thr"></b></div><div class="ds" id="lvlText" style="margin-top:6px">—</div></div>
-   <div class="dp" data-id="state" data-w="6" data-h="130"><div class="dt">State</div><div class="dv" id="stateText" style="font-size:22px">—</div></div>
-   <div class="dp" data-id="live" data-w="6" data-h="360"><div class="dt">Live camera</div><div class="media"><img class="view" id="live" alt=""><div class="ds" id="liveNote">Jim isn't running.</div></div></div>
-   <div class="dp" data-id="judged" data-w="6" data-h="360"><div class="dt">Last frame Jim judged</div><div class="media"><img class="view" id="judged" alt=""><div class="verdict" id="verdict"></div></div></div>
+   <div class="dp" data-id="state" data-w="12" data-h="80"><div class="dt">State</div><div class="dv" id="stateText" style="font-size:20px">—</div></div>
+   <div class="dp" data-id="hearing" data-w="2" data-h="360"><div class="dt">Mic level</div>
+    <div class="vmeter"><div class="vscale"><span style="bottom:100%">0</span><span style="bottom:75%">-20</span><span style="bottom:50%">-40</span><span style="bottom:25%">-60</span><span style="bottom:0">-80</span></div>
+     <div class="vbar"><i id="lvl"></i><b id="thr"></b></div>
+     <div class="vread"><div class="dv" id="lvlDb">—</div><div class="ds">dBFS</div><div class="ds" id="lvlText" style="margin-top:8px"></div></div></div></div>
+   <div class="dp" data-id="live" data-w="5" data-h="360"><div class="dt">Live camera</div><div class="media"><img class="view" id="live" alt=""><div class="ds" id="liveNote">Jim isn't running.</div></div></div>
+   <div class="dp" data-id="judged" data-w="5" data-h="360"><div class="dt">Last frame Jim judged</div><div class="media"><img class="view" id="judged" alt=""><div class="verdict" id="verdict"></div></div></div>
    <div class="dp" data-id="resp" data-w="6" data-h="270"><div class="dt">Response times <span class="sub">· per reply, seconds</span></div><div class="chart" id="chResp"></div></div>
    <div class="dp" data-id="net" data-w="6" data-h="270"><div class="dt">Network latency <span class="sub">· ms, last 6 min</span></div><div class="chart" id="chNet"></div></div>
-   <div class="dp" data-id="mic" data-w="6" data-h="270"><div class="dt">Mic level <span class="sub">· last 2 min · dashed = Jim reacts above</span></div><div class="chart" id="chMic"></div></div>
+   <div class="dp" data-id="mic" data-w="6" data-h="270"><div class="dt">Mic level history <span class="sub">· dBFS, last 2 min · dashed = Jim reacts above</span></div><div class="chart" id="chMic"></div></div>
    <div class="dp" data-id="services" data-w="6" data-h="270"><div class="dt">Services</div><div class="scroll"><table class="dtab"><thead><tr><th>Service</th><th>Status</th><th>Latency</th><th>Detail</th></tr></thead><tbody id="mNet"></tbody></table></div></div>
    <div class="dp" data-id="events" data-w="6" data-h="320"><div class="dt">What happened</div><div class="scroll"><ul class="log" id="events"></ul></div></div>
    <div class="dp" data-id="console" data-w="6" data-h="320"><div class="dt">Console</div><pre class="console scroll" id="console"></pre></div>
@@ -243,6 +252,19 @@ document.addEventListener("click", e => { if (e.target.dataset?.kill) control("s
 
 // ---- live view (Jim's own viewer, through the panel)
 let judgedAt = 0;
+const dbfs = v => v > 0 ? 20 * Math.log10(v / 32768) : -90;
+const pctDb = db => Math.max(0, Math.min(100, (db + 80) / 80 * 100));      // -80..0 dBFS -> 0..100 %
+function vmeter(mic) {
+  const db = dbfs(mic.level), th = dbfs(mic.thresh), on = mic.level > mic.thresh;
+  $("lvl").style.height = (100 - pctDb(db)) + "%"; $("thr").style.bottom = `calc(${pctDb(th)}% - 1px)`;
+  $("lvlDb").textContent = db <= -89 ? "—" : Math.round(db) + " dB"; $("lvlDb").style.color = on ? "#73bf69" : "#8e8e9a";
+  $("lvlText").innerHTML = `Jim reacts above <b>${Math.round(th)} dB</b>` + (on ? "<br>hearing something" : "");
+}
+async function pollMic() {
+  if (!status.running || !$("tab-live").classList.contains("on")) return;
+  try { const m = await (await api("/jim/mic.json")).json(); if (m.thresh) vmeter(m) } catch (e) {}
+}
+setInterval(pollMic, 200);
 function meter(i, b, t, mic) {
   const top = Math.max(mic.thresh * 2.5, 1);
   $(i).style.width = Math.min(100, mic.level / top * 100) + "%"; $(b).style.left = Math.min(100, mic.thresh / top * 100) + "%";
@@ -255,7 +277,7 @@ async function pollLive() {
     const d = await (await api("/jim/events.json")).json();
     lastJim = d; sample(d); paintDash();
     $("stateText").textContent = d.state + (d.snooze_left ? ` · snoozing ${d.snooze_left} s` : "") + (d.recording ? " · recording" : "");
-    if (d.mic) { meter("lvl", "thr", "lvlText", d.mic); meter("lvl2", "thr2", "lvlText2", d.mic) }
+    if (d.mic) meter("lvl2", "thr2", "lvlText2", d.mic);
     if (d.judged_at && d.judged_at !== judgedAt) { judgedAt = d.judged_at; $("judged").src = "/jim/judged.jpg?" + judgedAt }
     const v = d.verdict;
     $("verdict").className = "verdict " + (v ? (v.error ? "err" : v.visible ? "yes" : "no") : "");
@@ -294,7 +316,9 @@ function chart(el, series, {unit = "", xlabels = ["", ""], floor0 = true} = {}) 
   const W = el.clientWidth || 400, H = Math.max(60, (el.clientHeight || 190) - 22), L = 38, R = 8, T = 8, B = 18, w = W - L - R, h = H - T - B;
   const all = series.flatMap(s => s.values).filter(v => v != null);
   if (!all.length) { el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="height:${H}px"><text x="${W / 2}" y="${H / 2}" text-anchor="middle">No data yet</text></svg>`; return }
-  const top = nice(Math.max(...all) * 1.1), lo = floor0 ? 0 : Math.min(...all), ticks = 4;
+  const mx = Math.max(...all), mn = Math.min(...all), ticks = 4;
+  let lo = 0, top = nice(mx * 1.1);
+  if (!floor0) { const pad = Math.max((mx - mn) * 0.1, 2); lo = Math.floor((mn - pad) / 10) * 10; top = Math.ceil((mx + pad) / 10) * 10 }
   const y = v => T + h - (v - lo) / (top - lo || 1) * h;
   let g = `<g class="grid">`;
   for (let i = 0; i <= ticks; i++) { const v = lo + (top - lo) * i / ticks, yy = y(v);
@@ -326,7 +350,7 @@ function paintDash() {
   const cols = [G.blue, G.orange, G.purple, G.green];
   chart($("chNet"), Object.entries(net).map(([name, c], i) => ({name, color: cols[i % 4], values: c.history})), {unit: "", xlabels: ["-6 min", "now"]});
   chart($("chMic"), [{name: "loudness", color: G.green, values: live.mic, fill: true}, {name: "Jim reacts above", color: G.red, values: live.thr, dash: true}],
-    {xlabels: ["-2 min", "now"]});
+    {xlabels: ["-2 min", "now"], unit: " dB", floor0: false});
   $("mNet").innerHTML = Object.entries(net).map(([name, c]) => `<tr><td>${esc(name)}</td><td><span class="${c.ok ? "up" : "down"}">${c.ok ? "UP" : "DOWN"}</span></td>
     <td style="color:${c.ms == null ? G.red : c.ms < 50 ? G.green : c.ms < 250 ? G.yellow : G.red}">${c.ms == null ? "—" : c.ms + " ms"}</td><td style="color:#8e8e9a">${esc(c.detail)}</td></tr>`).join("")
     + (cam ? `<tr><td>Camera stream</td><td><span class="${cam.age_s != null && cam.age_s < 3 ? "up" : "down"}">${cam.age_s != null && cam.age_s < 3 ? "UP" : "STALE"}</span></td>
@@ -336,7 +360,7 @@ function paintDash() {
 }
 function sample(d) {
   const push = (k, v) => { live[k].push(v); if (live[k].length > 120) live[k].shift() };
-  push("mic", d?.mic ? d.mic.level : null); push("thr", d?.mic ? d.mic.thresh : null); push("fps", d?.camera ? d.camera.fps : null);
+  push("mic", d?.mic ? Math.max(-80, dbfs(d.mic.level)) : null); push("thr", d?.mic ? dbfs(d.mic.thresh) : null); push("fps", d?.camera ? d.camera.fps : null);
 }
 async function pollNet() { try { net = (await (await api("/api/network")).json()).checks; paintDash() } catch (e) {} }
 setInterval(pollNet, 5000); pollNet();

@@ -593,6 +593,8 @@ setInterval(poll,1000);poll();
                     if not frame:
                         self.send_response(404); self.end_headers(); return
                     return self.send(frame, "image/jpeg")
+                if path == "/mic.json":                  # polled several times a second by the panel's meter
+                    return self.send(json.dumps(watch.extra().get("mic") or {}).encode(), "application/json")
                 if path == "/events.json":
                     with watch.lock:
                         d = {"state": watch.state(), "events": list(watch.events), "verdict": watch.verdict,

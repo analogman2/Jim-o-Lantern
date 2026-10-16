@@ -466,7 +466,7 @@ class Panel(BaseHTTPRequestHandler):
         path = urllib.parse.urlsplit(self.path).path
         if path == "/":
             return self.send(200, (HERE / "panel.html").read_bytes(), "text/html; charset=utf-8")
-        if path in ("/jim/events.json", "/jim/live.jpg", "/jim/judged.jpg"):
+        if path in ("/jim/events.json", "/jim/mic.json", "/jim/live.jpg", "/jim/judged.jpg"):
             return self.proxy(path[4:])
         if path == "/api/status":
             return self.send(200, jim.status())
