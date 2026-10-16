@@ -2,9 +2,8 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Jim's control panel</title>
 <style>
-:root{--bg:#f6f3ef;--card:#fff;--ink:#1d1a17;--mute:#6f675f;--line:#e4ddd5;--accent:#e2630f;--ok:#2f8f46;--bad:#c23b2b;--chip:#f1ebe4}
-@media (prefers-color-scheme:dark){:root{--bg:#141210;--card:#1e1b18;--ink:#efe9e2;--mute:#a39a90;--line:#332e29;--accent:#ff8a2b;--ok:#5fc97a;--bad:#ff6b5b;--chip:#2a2622}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+:root{--bg:#111217;--card:#181b1f;--ink:#ccccdc;--mute:#8e8e9a;--line:#2c3235;--accent:#3d71d9;--orange:#ff9830;--ok:#73bf69;--bad:#f2495c;--chip:#22252b;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
 header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 16px;border-bottom:1px solid var(--line);background:var(--card);position:sticky;top:0;z-index:5}
 header h1{font-size:18px;margin:0;margin-right:auto}
 .pill{border-radius:99px;padding:3px 10px;font-size:13px;font-weight:600;background:var(--chip);color:var(--mute)}.pill.on{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
@@ -15,9 +14,23 @@ nav button.on{background:var(--chip);color:var(--ink);font-weight:600}
 main{max-width:1100px;margin:0 auto;padding:16px}main:has(#tab-live.on){max-width:1700px}
 .tab{display:none}.tab.on{display:block}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:16px;min-width:0}
-.card h2{font-size:15px;margin:0 0 10px}
-button.b{font:inherit;border:1px solid var(--line);background:var(--chip);color:var(--ink);border-radius:8px;padding:7px 14px;cursor:pointer}
+.card{background:var(--card);border:1px solid var(--line);border-radius:4px;padding:12px 14px;margin-bottom:16px;min-width:0}
+.card h2{font-size:13px;font-weight:500;margin:0 0 10px;color:var(--ink)}
+header h1{color:var(--orange)}nav button.on{box-shadow:inset 0 -2px 0 var(--orange)}
+input[type=range]{width:100%;accent-color:var(--orange);margin:6px 0 0}
+.sl{display:flex;align-items:center;gap:10px}.sl input{flex:1}.sl .val{min-width:96px;text-align:right;font-variant-numeric:tabular-nums;color:var(--mute);font-size:12px}.sl .val b{color:var(--ink);font-size:15px}
+.cams{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-bottom:16px}
+.camcard{background:var(--card);border:1px solid var(--line);border-radius:4px;padding:10px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.camcard.active{border-color:var(--orange)}.camcard .thumb{position:relative;aspect-ratio:16/9;background:#0b0c0e;border-radius:3px;overflow:hidden}
+.camcard .thumb img{width:100%;height:100%;object-fit:cover;display:block}.camcard .thumb img:not([src]){visibility:hidden}
+.camcard .thumb .snapnote{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;text-align:center;padding:8px}
+.badge{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:3px;font-size:11px;font-weight:600;background:rgba(255,152,48,.15);color:var(--orange)}
+.sub{font-size:12px;color:var(--mute)}.bars{display:flex;align-items:flex-end;gap:1px;height:50px;margin-top:8px}.bars i{flex:1;background:var(--ok);min-height:1px}button.b.sm{padding:4px 10px;font-size:12px}
+.thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.vcard{background:var(--card);border:1px solid var(--line);border-radius:4px;overflow:hidden;cursor:pointer}.vcard:hover{border-color:var(--orange)}
+.vcard img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block;background:#0b0c0e}.vcard .vb{padding:8px 10px}
+.vcard .when{font-weight:600}.vcard .seen{font-size:12px;color:var(--mute);margin-top:3px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+button.b{font:inherit;border:1px solid var(--line);background:var(--chip);color:var(--ink);border-radius:4px;padding:6px 12px;cursor:pointer}
 button.b:hover{border-color:var(--accent)}button.b.go{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 button.b:disabled{opacity:.5;cursor:default}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
@@ -25,7 +38,7 @@ img.view{width:100%;border-radius:8px;background:var(--chip);display:block;aspec
 img.view:not([src]){visibility:hidden}
 .field{margin-bottom:14px}.field label{display:block;font-weight:600;margin-bottom:4px}
 .field .help{color:var(--mute);font-size:13px;margin-top:3px}
-input[type=text],input[type=number],input[type=password],select,textarea{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 9px}
+input[type=text],input[type=number],input[type=password],select,textarea{width:100%;font:inherit;color:var(--ink);background:#111217;border:1px solid var(--line);border-radius:4px;padding:6px 8px}
 textarea{min-height:76px;resize:vertical}input[type=checkbox]{width:18px;height:18px;vertical-align:middle;margin-right:6px}
 .changed input,.changed select,.changed textarea{border-color:var(--accent)}
 .meter{height:16px;background:var(--chip);border-radius:8px;position:relative;overflow:hidden}
@@ -34,7 +47,7 @@ textarea{min-height:76px;resize:vertical}input[type=checkbox]{width:18px;height:
 ul.log{list-style:none;padding:0;margin:0;max-height:340px;overflow:auto}ul.log li{padding:6px 0;border-top:1px solid var(--line);font-size:14px}
 .t{color:var(--mute);font-size:12px;margin-right:6px;font-variant-numeric:tabular-nums}
 pre.console{margin:0;max-height:300px;overflow:auto;font:12px/1.4 ui-monospace,monospace;white-space:pre-wrap;background:var(--bg);border-radius:8px;padding:8px}
-.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;display:none;gap:10px;align-items:center;z-index:9;max-width:calc(100% - 32px)}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#2c3235;color:#fff;border:1px solid #3d4248;padding:10px 16px;border-radius:10px;display:none;gap:10px;align-items:center;z-index:9;max-width:calc(100% - 32px)}
 .visit{display:flex;gap:12px;align-items:center;padding:8px;border-radius:10px;cursor:pointer;border:1px solid transparent}.visit:hover{border-color:var(--line)}
 .visit img{width:96px;aspect-ratio:16/9;object-fit:cover;border-radius:6px;background:var(--chip);flex:none}
 .entry{display:grid;grid-template-columns:minmax(0,220px) 1fr;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
@@ -112,23 +125,39 @@ table.dtab td{padding:6px;border-bottom:1px solid #22252b;font-variant-numeric:t
  </div>
 </section>
 <section class="tab" id="tab-camera">
+ <div class="row" style="margin-bottom:12px"><button class="b go" id="camAdd">＋ Add camera</button>
+  <span class="sub">The camera marked <span class="badge" style="margin:0">In use</span> is the one Jim looks through (after a restart) and the one on the Live tab.</span></div>
+ <div class="cams" id="cams"><div class="muted">Loading…</div></div>
  <div class="grid">
-  <div class="card"><h2>Security camera</h2>
-   <div class="field"><label>IP address</label><input type="text" id="camIp"></div>
-   <div class="field"><label>User</label><input type="text" id="camUser"></div>
-   <div class="field"><label>Stream path</label><input type="text" id="camPath"><div class="help">Reolink: h264Preview_01_main</div></div>
-   <div class="field"><label>Password</label><input type="password" id="camPass" autocomplete="new-password"><div class="help" id="camPassHelp"></div></div>
-   <div class="row"><button class="b go" id="camSave">Save camera</button></div></div>
-  <div class="card"><h2>Live preview</h2><img class="view" id="camTest" alt=""><div class="muted" id="camTestNote">Watch a camera live (5 frames a second) with the settings as saved.</div>
-   <div class="row" style="margin-top:8px"><button class="b" id="camTestRtsp">Security camera</button><button class="b" id="camTestUsb">USB webcam</button><button class="b" id="camStop">Stop</button></div></div>
+  <div class="card" id="camForm" style="display:none"><h2 id="cfTitle">Add a camera</h2>
+   <div class="field"><label>Name</label><input type="text" id="cfName" placeholder="Driveway camera"></div>
+   <div class="field"><label>Type</label><select id="cfKind"><option value="rtsp">Security camera (RTSP, over the network)</option><option value="usb">USB webcam</option></select></div>
+   <div id="cfRtsp"><div class="field"><label>IP address</label><input type="text" id="cfIp"></div>
+    <div class="field"><label>User</label><input type="text" id="cfUser"></div>
+    <div class="field"><label>Stream path</label><input type="text" id="cfPath" placeholder="h264Preview_01_main"><div class="help">Reolink: h264Preview_01_main</div></div>
+    <div class="field"><label>Password</label><input type="password" id="cfPass" autocomplete="new-password"><div class="help" id="cfPassHelp"></div></div></div>
+   <div id="cfUsb" style="display:none"><div class="field"><label>Device</label><select id="cfDev"></select></div></div>
+   <div class="row"><button class="b go" id="cfSave">Save</button><button class="b" id="cfSaveUse">Save and use</button><button class="b" id="cfCancel">Cancel</button></div></div>
+  <div class="card"><h2>Live preview</h2><img class="view" id="camTest" alt=""><div class="muted" id="camTestNote">Press Live on a camera to watch it here (5 frames a second).</div>
+   <div class="row" style="margin-top:8px"><button class="b" id="camStop">Stop</button></div></div>
  </div>
  <div id="fields-camera"></div>
 </section>
 <section class="tab" id="tab-mic">
+ <div class="row" style="margin-bottom:12px"><button class="b go" id="micAdd">＋ Add mic</button>
+  <span class="sub">The mic marked <span class="badge" style="margin:0">In use</span> is the one Jim listens with (after a restart), with its sensitivity.</span></div>
+ <div class="cams" id="mics"><div class="muted">Loading…</div></div>
  <div class="grid">
-  <div id="fields-mic"></div>
-  <div><div class="card"><h2>Test the mic</h2><div class="muted">Records 3 seconds (when Jim isn't using the mic) and suggests a minimum loudness. Talk at the distance kids will.</div>
-   <div class="row" style="margin-top:8px"><button class="b" id="micTest">Record 3 s</button></div><div id="micResult" style="margin-top:8px"></div><div class="bars" id="micBars"></div></div>
+  <div class="card" id="micForm" style="display:none"><h2 id="mfTitle">Add a mic</h2>
+   <div class="field"><label>Name</label><input type="text" id="mfName" placeholder="Porch mic"></div>
+   <div class="field"><label>Device</label><select id="mfDev"></select></div>
+   <div class="field"><label>Minimum loudness</label><input type="number" id="mfMin" min="50" step="10" placeholder="automatic"><div class="help" id="mfMinHelp">Jim ignores anything quieter. Use "Test 3 s" to measure.</div></div>
+   <div class="field"><label>Louder than the background by (×)</label><input type="number" id="mfVad" step="0.5" min="1"><div class="help">4 = speech must be 4× louder than the room's noise</div></div>
+   <div class="field"><label>Pause that ends a sentence (s)</label><input type="number" id="mfSil" step="0.1" min="0.3"></div>
+   <div class="field"><label>LED controller mic gain (1–255)</label><input type="number" id="mfGain" min="1" max="255"><div class="help">only for the LED controller's own mic</div></div>
+   <div class="row"><button class="b go" id="mfSave">Save</button><button class="b" id="mfSaveUse">Save and use</button><button class="b" id="mfCancel">Cancel</button></div></div>
+  <div><div class="card"><h2>Test</h2><div class="muted" id="micTestNote">Press "Test 3 s" on a mic and talk at the distance kids will be. (A mic Jim is using can't be tested: watch the live meter instead.)</div>
+   <div id="micResult" style="margin-top:8px"></div><div class="bars" id="micBars"></div></div>
    <div class="card"><h2>Live (while Jim runs)</h2><div class="meter"><i id="lvl2"></i><b id="thr2"></b></div><div class="muted" id="lvlText2" style="margin-top:6px">—</div></div></div>
  </div>
 </section>
@@ -146,7 +175,7 @@ table.dtab td{padding:6px;border-bottom:1px solid #22252b;font-variant-numeric:t
  <div class="grid"><div id="fields-recordings"></div>
   <div class="card"><h2>Privacy</h2><div class="muted">Recordings hold children's voices and pictures. They stay on this PC in <code id="recDir"></code>, are never committed, and old ones are deleted automatically. Consider a sign at the driveway.</div>
    <div class="row" style="margin-top:8px"><button class="b" id="recDelAll">Delete all recordings</button></div></div></div>
- <div class="grid"><div class="card"><h2>Visits</h2><div id="visits" class="muted">—</div></div><div class="card" id="visitCard" style="display:none"><h2 id="visitTitle"></h2><div id="visit"></div></div></div>
+ <div class="card"><h2>Visits</h2><div id="visits" class="thumbs muted">—</div></div><div class="card" id="visitCard" style="display:none"><h2 id="visitTitle"></h2><div id="visit"></div></div>
 </section>
 </main>
 <div class="toast" id="toast"><span id="toastText"></span><button class="b" id="toastBtn" style="display:none">Restart Jim</button></div>
@@ -172,6 +201,8 @@ function show(name) {
   for (const [k] of TABS) { $("tab-" + k).classList.toggle("on", k === name); document.querySelector(`nav [data-t=${k}]`).classList.toggle("on", k === name) }
   try { localStorage.setItem("jimTab", name) } catch (e) {}
   if (name === "recordings") loadVisits();
+  if (name === "camera") loadCams(true);
+  if (name === "mic") loadMics();
   updateLive();
   if (name !== "camera" && $("camTest").getAttribute("src")) camStop();
 }
@@ -190,12 +221,25 @@ function fieldHtml(f) {
     const opts = (D[f.pick] || []).map(([val, desc]) => `<option value="${esc(val)}" ${val === v ? "selected" : ""}>${esc(desc ? `${desc} — ${val}` : val)}</option>`);
     if (v != null && !(D[f.pick] || []).some(([val]) => val === v)) opts.unshift(`<option selected value="${esc(v)}">${esc(v)}</option>`);
     input = `<select id="${id}">${opts.join("")}</select>`;
+  } else if (f.slider) {
+    const pos = toSlider(f);
+    input = `<div class="sl"><input type="range" min="1" max="10" step="1" id="${id}" value="${pos}"><span class="val" id="${id}_v">${sliderLabel(f, pos)}</span></div>`;
   } else if (f.long) input = `<textarea id="${id}">${esc(v)}</textarea>`;
   else input = `<input type="${f.kind === "str" ? "text" : "number"}" ${f.kind === "float" ? 'step="any"' : ""} id="${id}" value="${esc(v ?? "")}" placeholder="${f.default == null ? "automatic" : ""}">`;
   return `<div class="field" data-name="${f.name}">${f.kind === "bool" ? "" : `<label for="${id}">${esc(f.name.replaceAll("_", " "))}</label>`}${input}<div class="help">${esc(f.help)}${f.default != null && f.default !== "" && !f.long ? ` · default ${esc(f.default)}` : ""}</div></div>`;
 }
+const realOf = (f, pos) => { const r = f.slider.base + (pos - 1) * f.slider.step; return f.kind === "int" ? Math.round(r) : +r.toFixed(3) };
+function toSlider(f) {
+  const v = f.value ?? f.slider.auto ?? f.default ?? f.slider.base;
+  return Math.max(1, Math.min(10, Math.round((v - f.slider.base) / f.slider.step) + 1));
+}
+function sliderLabel(f, pos) {
+  const r = realOf(f, pos), unit = /after|timeout|snooze|delay|offset/.test(f.name) ? " s" : "";
+  return `<b>${pos}</b>/10 · ${r}${unit}`;
+}
 function readField(f) {
   const el = $("f_" + f.name);
+  if (f.slider) return el.dataset.touched ? realOf(f, +el.value) : f.value;
   if (f.kind === "bool") return el.checked;
   if (el.value === "" && f.kind !== "str") return null;
   return f.kind === "int" ? parseInt(el.value) : f.kind === "float" ? parseFloat(el.value) : el.value;
@@ -208,8 +252,10 @@ function renderForms() {
     for (const s of sections) for (const f of s.fields) {
       fieldEls[f.name] = f;
       const el = $("f_" + f.name);
-      el.addEventListener("input", () => { el.closest(".field").classList.toggle("changed", JSON.stringify(readField(f)) !== JSON.stringify(f.value)) });
-      if (f.name === "camera_source" || f.name === "usb_camera") el.addEventListener("change", () => updateLive());
+      el.addEventListener("input", () => {
+        if (f.slider) { el.dataset.touched = 1; $("f_" + f.name + "_v").innerHTML = sliderLabel(f, +el.value) }
+        el.closest(".field").classList.toggle("changed", JSON.stringify(readField(f)) !== JSON.stringify(f.value));
+      });
     }
   }
 }
@@ -220,15 +266,13 @@ document.addEventListener("click", async e => {
   if (!Object.keys(changes).length) return toast("Nothing changed");
   try {
     const d = await (await post("/api/settings", changes)).json();
-    for (const [k, v] of Object.entries(changes)) { fieldEls[k].value = v; $("f_" + k).closest(".field").classList.remove("changed") }
+    for (const [k, v] of Object.entries(changes)) { fieldEls[k].value = v; $("f_" + k).closest(".field").classList.remove("changed"); delete $("f_" + k).dataset.touched }
     toast(d.restart ? "Saved. Restart Jim to use it." : "Saved.", d.restart);
   } catch (err) { toast("Not saved: " + err.message) }
 });
 async function loadSettings() {
   [S, D] = await Promise.all([api("/api/settings").then(r => r.json()), api("/api/devices").then(r => r.json())]);
   renderForms();
-  const c = S.camera; $("camIp").value = c.ip; $("camUser").value = c.user; $("camPath").value = c.path;
-  $("camPassHelp").textContent = c.password_saved ? "A password is saved. Leave this empty to keep it." : "No password saved yet.";
 }
 
 // ---- Jim: start / stop / status
@@ -297,9 +341,8 @@ setInterval(pollLive, 1000);
 // the Live camera shows the input chosen on the Camera tab (saved or not), as a live stream while the Live tab is open
 let liveKey = null, liveSince = 0;
 function liveInput() {
-  const src = fieldEls.camera_source ? readField(fieldEls.camera_source) : "auto";
-  const dev = fieldEls.usb_camera ? readField(fieldEls.usb_camera) : "/dev/video0";
-  return src === "none" ? null : {source: src === "usb" ? "usb" : "rtsp", dev};
+  const c = CAMS.cameras.find(c => c.id === CAMS.active);
+  return c ? {source: c.kind, dev: c.id, name: c.name} : null;
 }
 function updateLive() {
   const on = $("tab-live").classList.contains("on"), inp = on ? liveInput() : null;
@@ -307,14 +350,14 @@ function updateLive() {
   if (key === liveKey && !(key && Date.now() - liveSince > 540e3)) return;     // the server ends a stream after 10 min
   liveKey = key; liveSince = Date.now();
   const img = $("live");
-  if (!inp) { img.removeAttribute("src"); $("liveNote").textContent = on ? "No camera chosen (Camera tab)." : ""; return }
-  img.onerror = () => { img.removeAttribute("src"); $("liveNote").textContent = inp.source === "usb" ? `⚠ Couldn't open ${inp.dev}.` : "⚠ The security camera didn't answer."; setTimeout(() => { liveKey = null }, 5000) };
-  img.src = `/api/camera/stream?source=${inp.source}&dev=${encodeURIComponent(inp.dev)}&t=${Date.now()}`;
+  if (!inp) { img.removeAttribute("src"); $("liveNote").textContent = on ? "No camera in use (Camera tab)." : ""; return }
+  img.onerror = () => { img.removeAttribute("src"); $("liveNote").textContent = `⚠ No picture from ${inp.name}.`; setTimeout(() => { liveKey = null }, 5000) };
+  img.src = `/api/camera/stream?cam=${encodeURIComponent(inp.dev)}&t=${Date.now()}`;
   paintLiveNote();
 }
 function paintLiveNote() {
   const inp = liveInput(); if (!inp) return;
-  const name = inp.source === "usb" ? "USB webcam " + inp.dev : "Security camera";
+  const name = inp.name;
   const jims = status.running && lastJim?.camera ? lastJim.camera.kind : null;
   $("liveNote").textContent = name + (jims && jims !== inp.source ? ` · Jim still sees the ${jims === "usb" ? "USB webcam" : "security camera"} until you save and restart him` : "");
 }
@@ -516,36 +559,125 @@ async function loadLayout() {
 try { localStorage.removeItem("jimDash") } catch (e) {}                 // the old flow layout
 loadLayout();
 
-// ---- camera
-$("camSave").onclick = async () => {
+// ---- saved cameras
+let CAMS = {cameras: [], active: null, devices: []}, editingCam = null;
+async function loadCams(snaps) {
+  try { CAMS = await (await api("/api/cameras")).json() } catch (e) { return }
+  paintCams(snaps); liveKey = null; updateLive();
+}
+function paintCams(snaps) {
+  $("cams").innerHTML = CAMS.cameras.map(c => `<div class="camcard ${c.id === CAMS.active ? "active" : ""}" data-cam="${esc(c.id)}">
+    <div class="thumb"><img data-snap="${esc(c.id)}" alt=""><span class="snapnote muted">Press ⟳ for a preview</span></div>
+    <div><b>${esc(c.name)}</b>${c.id === CAMS.active ? '<span class="badge">In use</span>' : ""}
+     <div class="sub">${c.kind === "usb" ? "USB webcam · " + esc(c.device) : "Security camera · " + esc(c.ip) + (c.password_saved ? "" : " · no password")}</div></div>
+    <div class="row"><button class="b sm" data-act="snap" title="take a new preview picture">⟳ Refresh</button><button class="b sm" data-act="live">Live</button>
+     ${c.id !== CAMS.active ? '<button class="b sm go" data-act="use">Use</button>' : ""}<button class="b sm" data-act="edit">Edit</button><button class="b sm" data-act="del">Delete</button></div></div>`).join("")
+    || `<div class="muted">No cameras saved yet: add one.</div>`;
+  if (snaps) CAMS.cameras.forEach(c => snap(c.id));
+}
+function snap(id) {
+  const img = document.querySelector(`[data-snap="${CSS.escape(id)}"]`); if (!img) return;
+  const note = img.nextElementSibling; note.textContent = "Getting a picture…";
+  img.onload = () => { note.textContent = "" };
+  img.onerror = () => { img.removeAttribute("src"); note.textContent = "⚠ No picture (unplugged, busy, or wrong password?)" };
+  img.src = `/api/cameras/${encodeURIComponent(id)}/snapshot?t=${Date.now()}`;
+}
+function camForm(c) {
+  editingCam = c ? c.id : null; $("camForm").style.display = "";
+  $("cfTitle").textContent = c ? "Edit " + c.name : "Add a camera";
+  $("cfName").value = c?.name || ""; $("cfKind").value = c?.kind || "rtsp";
+  $("cfIp").value = c?.ip || ""; $("cfUser").value = c?.user || ""; $("cfPath").value = c?.path || ""; $("cfPass").value = "";
+  $("cfPassHelp").textContent = c?.password_saved ? "A password is saved. Leave this empty to keep it." : "";
+  $("cfDev").innerHTML = CAMS.devices.map(([d, n]) => `<option value="${esc(d)}">${esc(n)} — ${esc(d)}</option>`).join("") || `<option value="">no webcam plugged in</option>`;
+  if (c?.device) $("cfDev").value = c.device;
+  kindChanged(); $("camForm").scrollIntoView({behavior: "smooth"});
+}
+function kindChanged() { const usb = $("cfKind").value === "usb"; $("cfUsb").style.display = usb ? "" : "none"; $("cfRtsp").style.display = usb ? "none" : "" }
+$("cfKind").onchange = kindChanged;
+$("camAdd").onclick = () => camForm(null);
+$("cfCancel").onclick = () => { $("camForm").style.display = "none" };
+async function saveCam(use) {
+  const body = {id: editingCam, name: $("cfName").value, kind: $("cfKind").value, ip: $("cfIp").value, user: $("cfUser").value,
+                path: $("cfPath").value, password: $("cfPass").value, device: $("cfDev").value, use};
   try {
-    const d = await (await post("/api/camera", {ip: $("camIp").value, user: $("camUser").value, path: $("camPath").value, password: $("camPass").value})).json();
-    $("camPass").value = ""; S.camera = d.camera; $("camPassHelp").textContent = "A password is saved. Leave this empty to keep it.";
-    toast(d.restart ? "Camera saved. Restart Jim to use it." : "Camera saved.", d.restart);
+    const d = await (await post("/api/cameras", body)).json();
+    $("camForm").style.display = "none"; await loadCams(false); snap(d.camera.id);
+    toast(use && d.restart ? "Saved. Restart Jim to look through it." : "Camera saved.", use && d.restart);
   } catch (e) { toast("Not saved: " + e.message) }
-};
-function camTest(source) {
-  const img = $("camTest"), dev = fieldEls.usb_camera ? readField(fieldEls.usb_camera) : "/dev/video0";
-  $("camTestNote").textContent = "Connecting…";
-  img.onload = () => { $("camTestNote").textContent = (source === "usb" ? "USB webcam " + dev : "Security camera") + ": live." };
-  img.onerror = () => { img.removeAttribute("src"); $("camTestNote").textContent = source === "usb"
-    ? "⚠ Couldn't open the webcam (unplugged, or another program has it)." : "⚠ The security camera didn't answer (check its IP, user and password)." };
-  img.src = `/api/camera/stream?source=${source}&dev=${encodeURIComponent(dev)}&t=${Date.now()}`;
+}
+$("cfSave").onclick = () => saveCam(false); $("cfSaveUse").onclick = () => saveCam(true);
+$("cams").addEventListener("click", async e => {
+  const act = e.target.dataset?.act, card = e.target.closest("[data-cam]"); if (!act || !card) return;
+  const id = card.dataset.cam, c = CAMS.cameras.find(x => x.id === id);
+  if (act === "snap") snap(id);
+  if (act === "live") camLive(c);
+  if (act === "edit") camForm(c);
+  if (act === "use") { try { const d = await (await post(`/api/cameras/${encodeURIComponent(id)}/use`)).json(); await loadCams(false); CAMS.cameras.forEach(x => snap(x.id)); toast(d.restart ? `Jim will look through ${c.name} after a restart.` : `${c.name} is in use.`, d.restart) } catch (err) { toast(err.message) } }
+  if (act === "del" && confirm(`Delete ${c.name}?`)) { await api(`/api/cameras/${encodeURIComponent(id)}`, {method: "DELETE"}); loadCams(true) }
+});
+function camLive(c) {
+  const img = $("camTest");
+  $("camTestNote").textContent = `Connecting to ${c.name}…`;
+  img.onload = () => { $("camTestNote").textContent = `${c.name}: live.` };
+  img.onerror = () => { img.removeAttribute("src"); $("camTestNote").textContent = `⚠ No picture from ${c.name}.` };
+  img.src = `/api/camera/stream?cam=${encodeURIComponent(c.id)}&t=${Date.now()}`;
 }
 function camStop() { $("camTest").onerror = null; $("camTest").removeAttribute("src"); $("camTestNote").textContent = "Stopped." }
-$("camTestRtsp").onclick = () => camTest("rtsp"); $("camTestUsb").onclick = () => camTest("usb"); $("camStop").onclick = camStop;
+$("camStop").onclick = camStop;
+loadCams(false);
 
-// ---- mic test
-$("micTest").onclick = async () => {
-  $("micResult").textContent = "Recording 3 s…"; $("micBars").innerHTML = "";
-  try {
-    const d = await (await post("/api/mic/test", {device: readField(fieldEls.mic)})).json();
-    $("micResult").innerHTML = `Background noise <b>${d.noise}</b>, loudest <b>${d.loudest}</b>. A good minimum loudness is about <b>${d.suggested_min_rms}</b>.
-      <button class="b" id="useMin">Use ${d.suggested_min_rms}</button>`;
-    const top = Math.max(...d.levels, 1); $("micBars").innerHTML = d.levels.map(x => `<i style="height:${Math.max(2, x / top * 100)}%"></i>`).join("");
-    $("useMin").onclick = () => { const el = $("f_min_rms"); el.value = d.suggested_min_rms; el.dispatchEvent(new Event("input")); toast("Set: press Save to keep it.") };
-  } catch (e) { $("micResult").textContent = "⚠ " + e.message }
-};
+// ---- saved mics
+let MICS = {mics: [], active: null, devices: []}, editingMic = null;
+const toDb = v => v > 0 ? Math.round(20 * Math.log10(v / 32768)) : null;
+async function loadMics() { try { MICS = await (await api("/api/mics")).json(); paintMics() } catch (e) {} }
+function paintMics() {
+  const desc = d => (MICS.devices.find(([x]) => x === d) || [d, d])[1] || d;
+  $("mics").innerHTML = MICS.mics.map(m => `<div class="camcard ${m.id === MICS.active ? "active" : ""}" data-mic="${esc(m.id)}">
+    <div><b>${esc(m.name)}</b>${m.id === MICS.active ? '<span class="badge">In use</span>' : ""}<div class="sub">${esc(desc(m.mic))}</div></div>
+    <div class="sub">Reacts above ${m.min_rms ? `${m.min_rms} (${toDb(m.min_rms)} dB)` : "automatic"} · ${m.vad_ratio}× the background · sentence ends after ${m.silence} s</div>
+    <div class="row">${m.id !== MICS.active ? '<button class="b sm go" data-act="use">Use</button>' : ""}<button class="b sm" data-act="test">Test 3 s</button>
+     <button class="b sm" data-act="edit">Edit</button><button class="b sm" data-act="del">Delete</button></div></div>`).join("")
+    || `<div class="muted">No mics saved yet: add one.</div>`;
+}
+function micForm(m) {
+  editingMic = m ? m.id : null; $("micForm").style.display = "";
+  $("mfTitle").textContent = m ? "Edit " + m.name : "Add a mic";
+  $("mfDev").innerHTML = MICS.devices.map(([d, n]) => `<option value="${esc(d)}">${esc(n || d)}${n ? " — " + esc(d) : ""}</option>`).join("");
+  $("mfName").value = m?.name || ""; if (m) $("mfDev").value = m.mic;
+  $("mfMin").value = m?.min_rms ?? ""; $("mfVad").value = m?.vad_ratio ?? 4; $("mfSil").value = m?.silence ?? 1.5; $("mfGain").value = m?.wled_gain ?? 16;
+  minHelp(); $("micForm").scrollIntoView({behavior: "smooth"});
+}
+function minHelp() { const v = +$("mfMin").value; $("mfMinHelp").textContent = v ? `= ${toDb(v)} dB. Jim ignores anything quieter. Use "Test 3 s" to measure.` : "automatic (300, or 500 for the LED controller's mic)" }
+$("mfMin").oninput = minHelp;
+$("micAdd").onclick = () => micForm(null);
+$("mfCancel").onclick = () => { $("micForm").style.display = "none" };
+async function saveMic(use) {
+  const num = id => $(id).value === "" ? null : +$(id).value;
+  const body = {id: editingMic, name: $("mfName").value, mic: $("mfDev").value, min_rms: num("mfMin"), vad_ratio: num("mfVad") ?? 4,
+                silence: num("mfSil") ?? 1.5, wled_gain: num("mfGain") ?? 16, use};
+  try { const d = await (await post("/api/mics", body)).json(); $("micForm").style.display = "none"; await loadMics();
+        toast((use || d.mic.id === MICS.active) && d.restart ? "Saved. Restart Jim to listen with it." : "Mic saved.", (use || d.mic.id === MICS.active) && d.restart) }
+  catch (e) { toast("Not saved: " + e.message) }
+}
+$("mfSave").onclick = () => saveMic(false); $("mfSaveUse").onclick = () => saveMic(true);
+$("mics").addEventListener("click", async e => {
+  const act = e.target.dataset?.act, card = e.target.closest("[data-mic]"); if (!act || !card) return;
+  const m = MICS.mics.find(x => x.id === card.dataset.mic);
+  if (act === "edit") micForm(m);
+  if (act === "use") { try { const d = await (await post(`/api/mics/${encodeURIComponent(m.id)}/use`)).json(); await loadMics(); toast(d.restart ? `Jim will listen with ${m.name} after a restart.` : `${m.name} is in use.`, d.restart) } catch (err) { toast(err.message) } }
+  if (act === "del" && confirm(`Delete ${m.name}?`)) { await api(`/api/mics/${encodeURIComponent(m.id)}`, {method: "DELETE"}); loadMics() }
+  if (act === "test") {
+    $("micResult").textContent = `Recording 3 s with ${m.name}…`; $("micBars").innerHTML = ""; $("micTestNote").textContent = "";
+    try {
+      const d = await (await post("/api/mic/test", {device: m.mic})).json();
+      $("micResult").innerHTML = `<b>${esc(m.name)}</b>: background ${d.noise} (${toDb(d.noise)} dB), loudest ${d.loudest} (${toDb(d.loudest)} dB).
+        A good minimum loudness is about <b>${d.suggested_min_rms}</b> (${toDb(d.suggested_min_rms)} dB). <button class="b sm" id="useMin">Use ${d.suggested_min_rms}</button>`;
+      const top = Math.max(...d.levels, 1); $("micBars").innerHTML = d.levels.map(x => `<i style="height:${Math.max(2, x / top * 100)}%"></i>`).join("");
+      $("useMin").onclick = () => { micForm(m); $("mfMin").value = d.suggested_min_rms; minHelp(); toast("Set: press Save to keep it.") };
+    } catch (err) { $("micResult").textContent = "⚠ " + err.message }
+  }
+});
+loadMics();
 
 // ---- voice preview
 async function preview(gentle) {
@@ -563,11 +695,16 @@ $("pv").onclick = () => preview(false); $("pvGentle").onclick = () => preview(tr
 async function loadVisits() {
   try {
     const d = await (await api("/api/recordings")).json(); $("recDir").textContent = d.dir;
-    $("visits").innerHTML = d.visits.length ? d.visits.map(v => {
-      const when = v.id.replace(/^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)$/, "$2/$3 $4:$5");
-      return `<div class="visit" data-visit="${v.id}">${v.frame ? `<img src="/rec/${v.id}/${v.frame}" alt="">` : `<img alt="">`}
-        <div><b>${when}</b> · ${v.turns} ${v.turns === 1 ? "reply" : "replies"}${v.roasted ? " · costume roast" : ""}<div class="muted">${esc(v.first)}</div></div></div>`;
-    }).join("") : "No visits recorded yet. Turn on <b>record</b> above, save, and restart Jim.";
+    const when = id => { const m = id.match(/^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)$/); if (!m) return id;
+      const t = new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+      return t.toLocaleDateString(undefined, {weekday: "short", month: "short", day: "numeric"}) + " · " + t.toLocaleTimeString(undefined, {hour: "numeric", minute: "2-digit"}) };
+    $("visits").classList.toggle("muted", !d.visits.length);
+    $("visits").innerHTML = d.visits.length ? d.visits.map(v => `<div class="vcard" data-visit="${v.id}">
+        ${v.frame ? `<img src="/rec/${v.id}/${v.frame}" alt="" loading="lazy">` : `<img alt="">`}
+        <div class="vb"><div class="when">${esc(when(v.id))}</div>
+         <div class="seen">${esc(v.seen || v.first || "—")}</div>
+         <div class="sub" style="margin-top:4px">${v.turns} ${v.turns === 1 ? "reply" : "replies"}${v.roasted ? " · costume roast" : ""}</div></div></div>`).join("")
+      : "No visits recorded yet. Turn on <b>record</b> above, save, and restart Jim.";
   } catch (e) { $("visits").textContent = "⚠ " + e.message }
 }
 document.addEventListener("click", async e => {

@@ -28,8 +28,8 @@ PYTHON = HERE / ".venv" / "bin" / "python"
 
 # tab -> [(section title, [option names])]; anything not listed isn't shown
 GROUPS = {
-    "camera": [("Camera", ["camera_source", "usb_camera", "camera_crop", "camera_width"])],
-    "mic": [("Microphone", ["mic", "min_rms", "vad_ratio", "silence", "wled_gain"])],
+    "camera": [("Picture sent to the AI", ["camera_crop", "camera_width"])],
+    "mic": [],                                   # saved mics (MICS_FILE) set mic, min_rms, vad_ratio, silence, wled_gain
     "voice": [("Voice", ["speaker", "voice_design", "gentle_voice_design", "pitch", "intonation", "echo", "grit", "lip_offset"]),
               ("Engine", ["tts", "speech_url"])],
     "responses": [("Personality", ["house", "temperature", "max_words"]),
@@ -39,6 +39,15 @@ GROUPS = {
     "recordings": [("Recording", ["record", "record_keep_days", "record_dir"])],
 }
 MANAGED = {k for groups in GROUPS.values() for _, keys in groups for k in keys}
+# 1-10 sliders: real value = base + (slider - 1) * step, chosen so each default lands on a whole step;
+# "auto" = the value Jim uses when the setting is left out (for the qwen voice)
+SLIDERS = {"pitch": (0.7, 0.06, 1.0), "intonation": (0.85, 0.15, 1.0), "echo": (0.0, 0.05, 0.0), "grit": (0.0, 0.06, 0.0),
+           "lip_offset": (0.0, 0.025, None), "temperature": (0.2, 0.15, None), "max_words": (5, 5, None),
+           "reset_after": (10, 10, None), "eyes_timeout": (10, 10, None), "snooze": (5, 5, None), "start_delay": (0, 15, None),
+           "brightness": (0.1, 0.1, None)}
+CONFIG_DIR = Path.home() / ".config" / "jim"
+CAMERAS_FILE = CONFIG_DIR / "cameras.json"      # saved cameras, with passwords: only you can read it
+MICS_FILE = CONFIG_DIR / "mics.json"
 LONG = {"voice_design", "gentle_voice_design", "house"}
 PICK = {"mic": "mics", "speaker": "speakers", "usb_camera": "cameras", "ollama_model": "models"}
 
@@ -154,14 +163,18 @@ def save_camera(ip, user, path, password=None):
     RTSP_FILE.chmod(0o600)
 
 
-def grab_frame(source, usb):
+def grab_frame(source, usb, url=None):
     """One JPEG from the security camera or a USB webcam. Errors never include the camera address."""
     if source == "usb":
+        mine = jims_camera()
+        if mine and mine == ("usb", usb):                         # Jim has the webcam: use his newest frame
+            with urllib.request.urlopen(WATCH + "/live.jpg", timeout=3) as r:
+                return r.read()
         src = ["-f", "v4l2", "-input_format", "mjpeg", "-video_size", "1280x720", "-i", usb, "-vf", "select=gte(n\\,8),scale=768:-2"]
         secret = None
     else:
         try:
-            secret = RTSP_FILE.read_text().strip()
+            secret = url or RTSP_FILE.read_text().strip()
         except OSError:
             raise ValueError("no security camera saved yet")
         src = ["-rtsp_transport", "tcp", "-timeout", "8000000", "-i", secret, "-vf", "scale=768:-2"]
@@ -186,13 +199,13 @@ def grab_frame(source, usb):
     raise ValueError(msg[-200:])
 
 
-def stream_cmd(source, usb):
+def stream_cmd(source, usb, url=None):
     """ffmpeg reading a camera continuously as JPEGs (5 a second), or None for the security camera if none is saved."""
     if source == "usb":
         src = ["-f", "v4l2", "-input_format", "mjpeg", "-video_size", "1280x720", "-i", usb]
     else:
         try:
-            src = ["-rtsp_transport", "tcp", "-timeout", "8000000", "-i", RTSP_FILE.read_text().strip()]
+            src = ["-rtsp_transport", "tcp", "-timeout", "8000000", "-i", url or RTSP_FILE.read_text().strip()]
         except OSError:
             return None
     return ["ffmpeg", "-loglevel", "quiet", *src, "-an", "-vf", "fps=5,scale=768:-2", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "5", "-"]
@@ -205,6 +218,171 @@ def jims_camera():
     cfg = load_config()
     src = cfg.get("camera_source", "auto")
     return ("usb", cfg.get("usb_camera", "/dev/video0")) if src == "usb" else ("rtsp", None) if src != "none" else None
+
+
+# ---------------------------------------------------------------- saved cameras and mics
+def read_private(path, default):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return default
+
+
+def write_private(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    old = os.umask(0o077)
+    try:
+        tmp = path.with_suffix(".tmp"); tmp.write_text(json.dumps(data, indent=1)); tmp.replace(path)
+    finally:
+        os.umask(old)
+    path.chmod(0o600)
+
+
+def new_id(name, taken):
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:30] or "item"
+    i, out = 1, base
+    while out in taken:
+        i += 1; out = f"{base}-{i}"
+    return out
+
+
+def cameras():
+    """Saved cameras. The first time, the camera Jim already uses and any plugged-in webcams are added."""
+    cams = read_private(CAMERAS_FILE, None)
+    if cams is None:
+        cams = []
+        try:
+            u = urllib.parse.urlsplit(RTSP_FILE.read_text().strip())
+            cams.append({"id": "security-camera", "name": "Security camera", "kind": "rtsp", "ip": u.hostname, "user": urllib.parse.unquote(u.username or ""),
+                         "password": urllib.parse.unquote(u.password or ""), "path": u.path.lstrip("/")})
+        except OSError:
+            pass
+        for dev, name in devices()["cameras"]:
+            cams.append({"id": new_id(name, {c["id"] for c in cams}), "name": name.split(":")[0], "kind": "usb", "device": dev})
+        write_private(CAMERAS_FILE, cams)
+    return cams
+
+
+def active_camera(cams=None):
+    cfg, cams = load_config(), cams if cams is not None else cameras()
+    src = cfg.get("camera_source", "auto")
+    if src == "none":
+        return None
+    if src == "usb":
+        return next((c["id"] for c in cams if c["kind"] == "usb" and c.get("device") == cfg.get("usb_camera", "/dev/video0")), None)
+    try:
+        u = urllib.parse.urlsplit(RTSP_FILE.read_text().strip())
+    except OSError:
+        return None
+    return next((c["id"] for c in cams if c["kind"] == "rtsp" and c.get("ip") == u.hostname and c.get("path") == u.path.lstrip("/")), None)
+
+
+def public_camera(c):
+    out = {k: v for k, v in c.items() if k != "password"}
+    if c["kind"] == "rtsp":
+        out["password_saved"] = bool(c.get("password"))
+    return out
+
+
+def camera_url(c):
+    return f"rtsp://{urllib.parse.quote(c['user'], safe='')}:{urllib.parse.quote(c['password'], safe='')}@{c['ip']}:554/{c['path']}"
+
+
+def save_camera_profile(b):
+    cams = cameras()
+    old = next((c for c in cams if c["id"] == b.get("id")), None)
+    kind = b.get("kind")
+    name = str(b.get("name") or "").strip()[:40] or ("USB webcam" if kind == "usb" else "Camera")
+    if kind == "usb":
+        dev = str(b.get("device") or "")
+        if not re.fullmatch(r"/dev/video\d+", dev):
+            raise ValueError("pick a webcam device")
+        c = {"name": name, "kind": "usb", "device": dev}
+    elif kind == "rtsp":
+        ip, user, path = (str(b.get(k) or "").strip() for k in ("ip", "user", "path"))
+        path = path.lstrip("/") or "h264Preview_01_main"
+        if not re.fullmatch(r"[\w.-]+", ip) or not re.fullmatch(r"[\w.@-]+", user) or not re.fullmatch(r"[\w./-]*", path):
+            raise ValueError("check the IP, user and stream path")
+        password = b.get("password") or (old or {}).get("password") or ""
+        if not password:
+            raise ValueError("enter the camera's password")
+        c = {"name": name, "kind": "rtsp", "ip": ip, "user": user, "path": path, "password": password}
+    else:
+        raise ValueError("kind must be rtsp or usb")
+    if old:
+        old.clear(); old.update(c, id=b["id"]); c = old
+    else:
+        c["id"] = new_id(name, {x["id"] for x in cams}); cams.append(c)
+    write_private(CAMERAS_FILE, cams)
+    if active_camera(cams) == c["id"] or b.get("use"):
+        use_camera(c["id"])
+    return c
+
+
+def use_camera(cid):
+    """Make this the camera Jim uses (from his next start): like set_camera.sh for the security camera."""
+    c = next((c for c in cameras() if c["id"] == cid), None)
+    if not c:
+        raise ValueError("no such camera")
+    if c["kind"] == "usb":
+        write_settings({"camera_source": "usb", "usb_camera": c["device"]})
+    else:
+        write_settings({"camera_source": "rtsp"})
+        write_settings({"ip": c["ip"], "user": c["user"], "path": c["path"]}, section="camera")
+        RTSP_FILE.parent.mkdir(parents=True, exist_ok=True)
+        old = os.umask(0o077)
+        try:
+            RTSP_FILE.write_text(camera_url(c) + "\n")
+        finally:
+            os.umask(old)
+        RTSP_FILE.chmod(0o600)
+
+
+MIC_KEYS = ("mic", "min_rms", "vad_ratio", "silence", "wled_gain")
+
+
+def mics():
+    """Saved microphones (a device plus how sensitive Jim is with it). The first time, Jim's current mic is added."""
+    ms = read_private(MICS_FILE, None)
+    if ms is None:
+        cfg, opts = load_config(), options()
+        cur = {k: cfg.get(k, opts[k]["default"]) for k in MIC_KEYS}
+        desc = dict(devices()["mics"]).get(cur["mic"], cur["mic"])
+        ms = [{"id": "current", "name": desc.split(",")[0] or "Current mic", **cur}]
+        write_private(MICS_FILE, ms)
+    return ms
+
+
+def active_mic(ms=None):
+    cfg, opts = load_config(), options()
+    cur = {k: cfg.get(k, opts[k]["default"]) for k in MIC_KEYS}
+    return next((m["id"] for m in (ms if ms is not None else mics()) if all(m.get(k) == cur[k] for k in MIC_KEYS)), None)
+
+
+def save_mic_profile(b):
+    ms, opts = mics(), options()
+    old = next((m for m in ms if m["id"] == b.get("id")), None)
+    m = {"name": str(b.get("name") or "").strip()[:40] or "Mic"}
+    for k in MIC_KEYS:
+        v = b.get(k, opts[k]["default"])
+        m[k] = None if v in (None, "") and k == "min_rms" else coerce(opts[k], v)
+    if old:
+        was_active = active_mic(ms) == old["id"]
+        old.clear(); old.update(m, id=b["id"]); m = old
+    else:
+        was_active = False
+        m["id"] = new_id(m["name"], {x["id"] for x in ms}); ms.append(m)
+    write_private(MICS_FILE, ms)
+    if was_active or b.get("use"):
+        use_mic(m["id"])
+    return m
+
+
+def use_mic(mid):
+    m = next((m for m in mics() if m["id"] == mid), None)
+    if not m:
+        raise ValueError("no such mic")
+    write_settings({k: m[k] for k in MIC_KEYS if m.get(k) is not None})
 
 
 # ---------------------------------------------------------------- devices
@@ -439,7 +617,11 @@ def visits():
         except (OSError, ValueError):
             continue
         es = v.get("entries", [])
-        out.append({"id": d.parent.name, "turns": sum(e["kind"] == "turn" for e in es), "entries": len(es),
+        greet = next((e for e in es if e["kind"] == "greeting"), {})
+        v = greet.get("verdict") or {}
+        seen = v.get("seen") or (v.get("error") and "couldn't look: " + v["error"]) or \
+            ("nobody clearly in view" if v.get("visible") is False else "no camera picture" if not greet.get("frame") else "")
+        out.append({"id": d.parent.name, "turns": sum(e["kind"] == "turn" for e in es), "entries": len(es), "seen": seen,
                     "frame": next((e["frame"] for e in es if e.get("frame")), None),
                     "first": es[0]["text"] if es else "", "roasted": any(e.get("roasted") for e in es)})
     return out
@@ -470,7 +652,7 @@ class Panel(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):   # the page went away mid-reply
             pass
 
-    def stream(self, source, usb, limit_s=600):
+    def stream(self, source, usb, url=None, limit_s=600):
         """A live preview as multipart JPEG (an <img> shows it as video) for up to limit_s. The USB webcam can only be
         opened by one program: while Jim is using it, this shows his frames instead."""
         mine = jims_camera()
@@ -485,7 +667,7 @@ class Panel(BaseHTTPRequestHandler):
                     except Exception:
                         return
                     time.sleep(0.2)
-            cmd = stream_cmd(source, usb)
+            cmd = stream_cmd(source, usb, url)
             if not cmd:
                 return
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -549,16 +731,31 @@ class Panel(BaseHTTPRequestHandler):
             return self.send(200, {"every_s": NET_EVERY_S, "checks": NET})
         if path == "/api/settings":
             opts, cfg = options(), load_config()
-            tabs = {tab: [{"title": t, "fields": [dict(opts[k], name=k, value=cfg.get(k, opts[k]["default"]), long=k in LONG, pick=PICK.get(k))
+            tabs = {tab: [{"title": t, "fields": [dict(opts[k], name=k, value=cfg.get(k, opts[k]["default"]), long=k in LONG, pick=PICK.get(k),
+                                                       slider=dict(zip(("base", "step", "auto"), SLIDERS[k])) if k in SLIDERS else None)
                                                   for k in keys if k in opts]} for t, keys in groups] for tab, groups in GROUPS.items()}
             return self.send(200, {"tabs": tabs, "camera": camera_settings()})
         if path == "/api/camera/stream":
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-            source = "usb" if q.get("source", [""])[0] == "usb" else "rtsp"
-            usb = q.get("dev", ["/dev/video0"])[0]
-            if not re.fullmatch(r"/dev/video\d+", usb):
-                return self.send(400, {"error": "not a webcam device"})
-            return self.stream(source, usb)
+            c = next((c for c in cameras() if c["id"] == q.get("cam", [""])[0]), None)
+            if not c:
+                return self.send(404, {"error": "no such camera"})
+            return self.stream(c["kind"], c.get("device"), camera_url(c) if c["kind"] == "rtsp" else None)
+        m = re.fullmatch(r"/api/cameras/([\w-]+)/snapshot", path)
+        if m:
+            c = next((c for c in cameras() if c["id"] == m.group(1)), None)
+            if not c:
+                return self.send(404, {"error": "no such camera"})
+            try:
+                return self.send(200, grab_frame(c["kind"], c.get("device"), camera_url(c) if c["kind"] == "rtsp" else None), "image/jpeg")
+            except (ValueError, OSError) as e:
+                return self.send(502, {"error": str(e)})
+        if path == "/api/cameras":
+            cams = cameras()
+            return self.send(200, {"cameras": [public_camera(c) for c in cams], "active": active_camera(cams), "devices": devices()["cameras"]})
+        if path == "/api/mics":
+            ms = mics()
+            return self.send(200, {"mics": ms, "active": active_mic(ms), "devices": devices()["mics"]})
         if path == "/api/devices":
             return self.send(200, devices())
         if path == "/api/recordings":
@@ -612,6 +809,16 @@ class Panel(BaseHTTPRequestHandler):
                 save_camera(b.get("ip", "").strip(), b.get("user", "").strip(), b.get("path", "").strip().lstrip("/"),
                             b.get("password") or None)
                 return self.send(200, {"ok": True, "camera": camera_settings(), "restart": jim.running()})
+            if path == "/api/cameras":
+                return self.send(200, {"camera": public_camera(save_camera_profile(b)), "restart": jim.running()})
+            m = re.fullmatch(r"/api/cameras/([\w-]+)/use", path)
+            if m:
+                use_camera(m.group(1)); return self.send(200, {"ok": True, "restart": jim.running()})
+            if path == "/api/mics":
+                return self.send(200, {"mic": save_mic_profile(b), "restart": jim.running()})
+            m = re.fullmatch(r"/api/mics/([\w-]+)/use", path)
+            if m:
+                use_mic(m.group(1)); return self.send(200, {"ok": True, "restart": jim.running()})
             if path == "/api/camera/test":
                 cfg = load_config()
                 source = b.get("source") or cfg.get("camera_source", "auto")
@@ -630,6 +837,11 @@ class Panel(BaseHTTPRequestHandler):
         if not self.local() or self.headers.get("X-Jim-Panel") != "1":
             return self.send(403, {"error": "forbidden"})
         path = urllib.parse.urlsplit(self.path).path
+        m = re.fullmatch(r"/api/(cameras|mics)/([\w-]+)", path)
+        if m:
+            f, items = (CAMERAS_FILE, cameras()) if m.group(1) == "cameras" else (MICS_FILE, mics())
+            write_private(f, [x for x in items if x["id"] != m.group(2)])
+            return self.send(200, {"ok": True})
         if path == "/api/recordings":
             for d in record_dir().glob("*/visit.json"):
                 shutil.rmtree(d.parent, ignore_errors=True)

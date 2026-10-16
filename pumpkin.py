@@ -650,13 +650,16 @@ def clean_greeting(text):
 GREETING_SCHEMA = {
     "type": "object",
     "properties": {
+        "seen": {"type": "string"},
         "trick_or_treaters_visible": {"type": "boolean"},
         "greeting": {"type": "string"},
     },
-    "required": ["trick_or_treaters_visible", "greeting"],
+    "required": ["seen", "trick_or_treaters_visible", "greeting"],
 }
 VISION_GREETING_ASK_JSON = (
-    "[You just woke up. Attached is what you see in front of you right now. First decide "
+    "[You just woke up. Attached is what you see in front of you right now. First, in \"seen\", "
+    "describe the scene plainly in one short sentence for the recording log: how many people, what "
+    "costumes, props or pets; never faces, bodies, age, or anything identifying. Then decide "
     "whether real people (trick-or-treaters) are clearly visible. If they are, write a greeting "
     "that roasts what they're wearing, in one or two short sentences, under 30 words. If no "
     "people are clearly visible, set trick_or_treaters_visible to false and leave greeting empty.]")
@@ -1070,7 +1073,7 @@ class OllamaBrain:
                             schema=GREETING_SCHEMA) as resp:
                 answer = json.loads(json.loads(resp.read())["message"]["content"])
             self.last_vision = {"visible": bool(answer.get("trick_or_treaters_visible")),
-                                "said": answer.get("greeting") or ""}
+                                "said": answer.get("greeting") or "", "seen": (answer.get("seen") or "").strip()[:200]}
             if not answer.get("trick_or_treaters_visible"):
                 return None
             return clean_greeting(answer.get("greeting"))
