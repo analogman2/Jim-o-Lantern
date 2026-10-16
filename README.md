@@ -121,8 +121,10 @@ stopping the panel stops Jim) and has tabs for:
   replies (as played). Recordings hold children's voices and pictures: they stay in `recordings/` (never
   committed) and are deleted after `record_keep_days` (7 by default).
 
-Settings are saved to `jim.toml` (your comments are kept); restart Jim to apply them. The panel answers only on
-this PC.
+Settings are saved to `jim.toml` (your comments are kept); restart Jim to apply them. The panel itself answers only on
+this PC. To keep it running in the background, install `systemd/jim-panel.service` as a user service. On jt's machine,
+Agentora's sign-in gate (`jim-gate`, Studio admins only) and Tailscale relay make it reachable from other devices at
+`https://<machine>.<tailnet>.ts.net:7885/`.
 
 ## Using Jim
 
