@@ -115,6 +115,7 @@ What I used:
 | `./start.sh --tts chatterbox` / `--tts kokoro` | Use a different voice engine (these run locally) |
 | `./start.sh --speech-url http://host:7895` | Use a speech service somewhere else |
 | `./start.sh --local-whisper` | Run Whisper in Jim's own process instead of the speech service |
+| `./start.sh --watch-port 8780` | Watch what Jim sees and decides at http://127.0.0.1:8780: the live camera, the frame he last judged with the verdict, and a log |
 | `./start.sh --keep-loaded` | Keep the voice, ears and chat model warm while Jim runs |
 | `./start.sh --max-words 15` / `--silence 2` | Shorter replies / wait longer for kids to finish |
 | `./start.sh --ollama-model qwen3.6:27b` | Smarter chat model (needs about 11 GB more video memory) |

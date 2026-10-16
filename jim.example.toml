@@ -21,6 +21,7 @@ ollama_url = "http://localhost:11434"
 ollama_model = "qwen3.5:9b"
 
 # keep_loaded = true      # keep the models warm while Jim runs (all released when he stops)
+# watch_port = 8780       # http://127.0.0.1:8780 shows the camera, what Jim judged, and a log (this PC only)
 # house = "Two pieces of candy each!"
 
 # Security camera, so Jim can roast costumes (optional). The password is never stored here:

@@ -437,6 +437,92 @@ class Camera(threading.Thread):
             time.sleep(5)
 
 
+class Watch:
+    """A page on this PC only (http://127.0.0.1:<port>) to watch what Jim sees and decides: the live camera, the
+    exact frame he last judged with the model's verdict, and a log of wake-ups and replies. Frames stay in memory."""
+
+    PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Jim's eyes</title><style>
+body{margin:0;padding:16px;background:#111;color:#eee;font:15px system-ui,sans-serif}
+h1{font-size:20px;margin:0 0 12px}h2{font-size:15px;margin:0 0 6px;color:#f80}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+img{width:100%;border-radius:8px;background:#222;display:block;min-height:120px}
+img:not([src]){display:none}.empty{color:#888;padding:40px 0;text-align:center}
+.card{background:#1b1b1b;border-radius:10px;padding:12px}
+.v{font-weight:600;margin:8px 0}.yes{color:#6d6}.no{color:#aaa}.err{color:#f66}
+ul{list-style:none;padding:0;margin:0}li{padding:6px 0;border-top:1px solid #2a2a2a}
+.t{color:#888;font-size:12px;margin-right:6px}#state{color:#f80}
+</style></head><body><h1>🎃 Jim's eyes <span id="state"></span></h1><div class="grid">
+<div class="card"><h2>Live camera</h2><img id="live" alt="no camera frame yet"></div>
+<div class="card"><h2>Last frame Jim judged</h2><img id="judged" alt=""><div id="none" class="empty">Nothing judged yet: wake Jim up</div><div id="verdict" class="v"></div></div>
+</div><div class="card" style="margin-top:16px"><h2>What happened</h2><ul id="log"></ul></div>
+<script>
+const $=id=>document.getElementById(id),esc=s=>String(s??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"})[c]);
+let judged=0;setInterval(()=>{$("live").src="live.jpg?"+Date.now()},500);
+async function poll(){try{const d=await (await fetch("events.json")).json();$("state").textContent="· "+d.state;
+if(d.judged_at&&d.judged_at!==judged){judged=d.judged_at;$("judged").src="judged.jpg?"+judged;$("none")?.remove()}
+const v=d.verdict;$("verdict").className="v "+(v?(v.error?"err":v.visible?"yes":"no"):"");
+$("verdict").textContent=v?(v.error?"⚠ "+v.error:(v.visible?"Sees trick-or-treaters":"Sees nobody")+(v.seconds!=null?" · "+v.seconds+" s":"")):"";
+$("log").innerHTML=d.events.slice().reverse().map(e=>`<li><span class="t">${esc(e.time)}</span>${esc(e.text)}</li>`).join("")}catch(e){}}
+setInterval(poll,1000);poll();
+</script></body></html>"""
+
+    def __init__(self, port, camera, state):
+        import collections
+        self.camera, self.state = camera, state
+        self.events = collections.deque(maxlen=60)
+        self.judged, self.judged_at, self.verdict = None, 0.0, None
+        self.lock = threading.Lock()
+        threading.Thread(target=self.serve, args=(port,), daemon=True).start()
+
+    def event(self, text):
+        with self.lock:
+            self.events.append({"time": time.strftime("%H:%M:%S"), "text": text})
+
+    def judge(self, frame, verdict):
+        with self.lock:
+            if frame:
+                self.judged, self.judged_at = frame, time.time()
+            self.verdict = verdict
+
+    def serve(self, port):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        watch = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def send(self, body, ctype):
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                path = self.path.split("?")[0]
+                if path == "/":
+                    return self.send(watch.PAGE.encode(), "text/html; charset=utf-8")
+                if path in ("/live.jpg", "/judged.jpg"):
+                    frame = (watch.camera.latest(max_age=10) if watch.camera else None) if path == "/live.jpg" else watch.judged
+                    if not frame:
+                        self.send_response(404); self.end_headers(); return
+                    return self.send(frame, "image/jpeg")
+                if path == "/events.json":
+                    with watch.lock:
+                        d = {"state": watch.state(), "events": list(watch.events), "verdict": watch.verdict,
+                             "judged_at": watch.judged_at}
+                    return self.send(json.dumps(d).encode(), "application/json")
+                self.send_response(404); self.end_headers()
+
+        try:
+            ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+        except OSError as e:
+            print(f"[watch] couldn't open the viewer on port {port}: {e}", file=sys.stderr)
+
+
 VISION_RULES = """
 
 You can see: a picture of the driveway in front of you comes with some messages. Use it to roast \
@@ -745,10 +831,14 @@ class Brain:
                                                  "data": base64.b64encode(image).decode()}},
                     {"type": "text", "text": VISION_GREETING_ASK}]}])
             if msg.stop_reason == "refusal":
+                self.last_vision = {"visible": None, "error": "refused"}
                 return None
-            return clean_greeting("".join(b.text for b in msg.content if b.type == "text"))
+            said = "".join(b.text for b in msg.content if b.type == "text")
+            self.last_vision = {"visible": clean_greeting(said) is not None, "said": said}
+            return clean_greeting(said)
         except Exception as e:
             print(f"[claude] vision greeting failed: {type(e).__name__}", file=sys.stderr)
+            self.last_vision = {"visible": None, "error": f"{type(e).__name__} (too slow or failed)"}
             return None
 
     def messages_with_image(self, image):
@@ -879,11 +969,14 @@ class OllamaBrain:
                             stream=False, timeout=timeout, max_tokens=120,
                             schema=GREETING_SCHEMA) as resp:
                 answer = json.loads(json.loads(resp.read())["message"]["content"])
+            self.last_vision = {"visible": bool(answer.get("trick_or_treaters_visible")),
+                                "said": answer.get("greeting") or ""}
             if not answer.get("trick_or_treaters_visible"):
                 return None
             return clean_greeting(answer.get("greeting"))
         except Exception as e:
             print(f"[ollama] vision greeting failed: {type(e).__name__}", file=sys.stderr)
+            self.last_vision = {"visible": None, "error": f"{type(e).__name__} (too slow or failed)"}
             return None
 
     def messages_with_image(self, image):
@@ -1444,6 +1537,8 @@ def main():
                    help="zoom the camera on the spot in front of the pumpkin, as fractions of "
                         "the frame, e.g. 0.3,0.4,0.4,0.5")
     p.add_argument("--camera-width", type=int, default=768, help="width of frames sent to the AI")
+    p.add_argument("--watch-port", type=int, default=0, metavar="PORT",
+                   help="show what Jim sees and decides on http://127.0.0.1:PORT (this PC only); 0 = off")
     p.add_argument("--type", action="store_true", help="type instead of using the mic (testing)")
     p.add_argument("--face-only", action="store_true", help="just animate the face (LED test)")
     # jim.toml supplies the defaults; anything on the command line still wins.
@@ -1539,6 +1634,11 @@ def main():
         camera.start()
         brain.system += VISION_RULES
         print("Camera on: Jim can see costumes.")
+    mode_box = ["dark"]                                # the main loop's mode, for the viewer
+    watch = Watch(args.watch_port, camera, lambda: f"{mode_box[0]} / {face.state}") if args.watch_port else None
+    if watch:
+        print(f"Watch what Jim sees: http://127.0.0.1:{args.watch_port}")
+    note = watch.event if watch else (lambda text: None)
     if args.brain == "ollama":
         import atexit
         atexit.register(brain.unload)  # nothing of Jim stays on the GPU after he stops
@@ -1553,25 +1653,33 @@ def main():
         return camera.latest() if camera else None
 
     def respond(text):
+        frame = see()
+        if watch and frame:
+            watch.judge(frame, None)
         if voice.streaming:
             face.state = "thinking"
-            t0 = time.time()
+            t0, said, took = time.time(), [], []
 
             def sentences():
-                for s in brain.reply_sentences(text, see()):
+                for s in brain.reply_sentences(text, frame):
                     voice.gentle = brain.gentle  # softer voice for a scared kid
                     print(f"  🎃 {s}")
+                    said.append(s.strip())
                     yield s
 
             def started():
                 face.state = "talking"
-                print(f"     (started talking after {time.time() - t0:.2f}s)")
+                took.append(time.time() - t0)
+                print(f"     (started talking after {took[0]:.2f}s)")
 
             voice.say_stream(sentences(), on_start=started)
+            note(f"🧒 \"{text}\" {'(with a camera frame)' if frame else '(no camera frame)'} → 🎃 \"{' '.join(said)}\""
+                 + (f" · talking after {took[0]:.2f} s" if took else "") + (" · gentle mode" if brain.gentle else ""))
             return
         face.state = "thinking"
         t0 = time.time()
-        reply = " ".join(s.strip() for s in brain.reply_sentences(text, see())).strip()
+        reply = " ".join(s.strip() for s in brain.reply_sentences(text, frame)).strip()
+        note(f"🧒 \"{text}\" → 🎃 \"{reply}\" · {time.time() - t0:.2f} s")
         audio = voice.synth(reply)  # the whole reply in one take, so it flows naturally
         print(f"  🎃 {reply}   ({time.time() - t0:.2f}s)")
         face.state = "talking"
@@ -1671,6 +1779,7 @@ def main():
         voice.gentle = False
         drain(noises)
         print("💤 Jim is asleep (dark). Make a noise to wake him.")
+        note("💤 asleep")
 
     def wake_up():
         mic.mute()
@@ -1678,14 +1787,26 @@ def main():
         # Look at the visitors while the wake-up animation plays, and roast what they're wearing.
         frame, seen = see(), {}
         if frame:
-            looker = threading.Thread(daemon=True, target=lambda: seen.update(
-                greeting=brain.vision_greeting(frame, timeout=REVEAL_SECONDS + 2.0)))
+            def look():
+                t = time.time()
+                seen["greeting"] = brain.vision_greeting(frame, timeout=REVEAL_SECONDS + 2.0)
+                seen["seconds"] = round(time.time() - t, 2)
+            looker = threading.Thread(daemon=True, target=look)
             looker.start()
         face.reveal()
         voice.play(rumble, mouth=False)
         if frame:
             looker.join(timeout=1.5)  # a little grace after the rumble
         greeting = seen.get("greeting")
+        if watch:
+            if not frame:
+                watch.judge(None, {"visible": None, "error": "no camera frame"})
+            elif "seconds" not in seen:
+                watch.judge(frame, {"visible": None, "error": "the model was too slow; used a stock greeting"})
+            else:
+                watch.judge(frame, dict(getattr(brain, "last_vision", None) or {}, seconds=seen["seconds"]))
+        note("🔥 woke up · " + (f"roasted what he saw: \"{greeting}\"" if greeting else
+             "saw nobody / no frame: stock greeting"))
         face.state = "talking"
         if greeting:
             print(f"  🎃 {greeting}   (roasting what he sees)")
@@ -1732,6 +1853,7 @@ def main():
                 brain.reset()
                 voice.gentle = False
                 mode, snoozing = "dark", True
+                mode_box[0] = mode
             drain(noises)
             drain(mic.utterances)
             time.sleep(0.2)
@@ -1745,17 +1867,20 @@ def main():
                 noises.get(timeout=0.5)
             except queue.Empty:
                 if mode == "eyes" and time.time() - eyes_since > args.eyes_timeout:
-                    mode = "dark"
+                    mode = mode_box[0] = "dark"
                     go_dark()
                 continue
             if mode == "dark":
                 mode, eyes_since = "eyes", time.time()
+                mode_box[0] = mode
                 face.state = "eyes"
                 print("👀 Something stirs... (eyes on, waiting for a second noise)")
+                note("👀 a noise: eyes on")
                 warm_up_speech()
             else:
                 wake_up()
                 mode, last_heard = "awake", time.time()
+                mode_box[0] = mode
             continue
 
         # awake: hold a conversation
@@ -1770,7 +1895,7 @@ def main():
                 face.state = "talking"
                 voice.say(goodbye)
                 mic.unmute()
-                mode = "dark"
+                mode = mode_box[0] = "dark"
                 go_dark()
             continue
         face.state = "thinking"
