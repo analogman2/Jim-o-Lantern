@@ -759,15 +759,17 @@ GREETING_SCHEMA = {
     "properties": {
         "seen": {"type": "string"},
         "trick_or_treaters_visible": {"type": "boolean"},
+        "children_visible": {"type": "boolean"},
         "greeting": {"type": "string"},
     },
-    "required": ["seen", "trick_or_treaters_visible", "greeting"],
+    "required": ["seen", "trick_or_treaters_visible", "children_visible", "greeting"],
 }
 VISION_GREETING_ASK_JSON = (
     "[You just woke up. Attached is what you see in front of you right now. First, in \"seen\", "
     "describe the scene plainly in one short sentence for the recording log: how many people, what "
     "costumes, props or pets; never faces, bodies, age, or anything identifying. Then decide "
-    "whether real people (trick-or-treaters) are clearly visible. If they are, write a greeting "
+    "whether real people (trick-or-treaters) are clearly visible, and in \"children_visible\" whether any of "
+    "them might be a child (if unsure, true). If people are visible, write a greeting "
     "that roasts what they're wearing, in one or two short sentences, under 30 words. If no "
     "people are clearly visible, set trick_or_treaters_visible to false and leave greeting empty.]")
 
@@ -1006,6 +1008,47 @@ fire or burning talk, no threats, no teasing, no sound-effect tags. Gently reass
 that you're just a silly pumpkin who was pretending to be grumpy and that you love \
 visitors, tell them they're very brave, and invite them to take a treat."""
 
+# --adult-mode: for an adults-only party. Swapped in for the kid-safety line, and dropped again (kid_safe) as soon as
+# a child might be there: the camera sees one, the vision check fails, a visitor sounds like a kid, or the partner
+# pumpkin has gone kid-safe.
+KID_SAFETY_LINE = "- Everything you say must be appropriate for small children."
+ADULT_SAFETY_LINE = "- Tonight is an adults-only party: see ADULT MODE below."
+ADULT_RULES = """
+
+ADULT MODE: tonight's visitors are grown-ups at an adults-only Halloween party, often a few drinks in. This \
+overrides everything above about kids, children and candy goblins.
+- Be a savage roast comic in your own character. Swearing is fine (damn, hell, shit, ass, bastard, and the \
+occasional fuck for punch), and so are crude jokes, drinking and hangover jokes, bad-decision jokes and cheeky \
+innuendo.
+- Roast their costumes, their candy, their party energy and how many drinks they've clearly had.
+- Innuendo only: no graphic or explicit sexual talk and no describing sex acts.
+- Still never roast anyone's body, looks, weight, race, gender, sexuality, disability or anything they can't \
+change. No slurs, no hate, no threats, nothing about real violence.
+- The moment you see or hear any sign of a child (a kid in the picture, a small voice, someone saying they're a \
+kid or that kids are here), drop all of this and be completely kid-friendly for the rest of the conversation."""
+
+ADULT_REMINDER = ("\n[Reminder: adults-only party. Roast them like an R-rated comic: swear, be crude, "
+                  "no holding back, but no explicit sex and nothing about bodies or who they are.]")
+
+KID_RE = re.compile(
+    r"\b(i'?m|i am) (a kid|a little|(three|four|five|six|seven|eight|nine|ten|eleven|twelve|[3-9]|1[0-2])\b)|"
+    r"\b(years old|mommy|daddy|kids? (are )?here|there are kids|children here|my (teacher|school))\b", re.I)
+
+
+def prompt_for(brain):
+    """The system prompt for this moment: adult mode only while no child might be there; gentle mode on top."""
+    s = brain.system
+    if brain.adult and not brain.kid_safe and not brain.gentle:
+        s = s.replace(KID_SAFETY_LINE, ADULT_SAFETY_LINE) + ADULT_RULES
+    return s + (GENTLE_OVERRIDE if brain.gentle else "")
+
+
+def kid_cue(brain, text):
+    """In adult mode: a visitor who sounds like (or mentions) a kid makes this conversation kid-safe."""
+    if brain.adult and not brain.kid_safe and KID_RE.search(text or ""):
+        brain.kid_safe = True
+        print("     (sounds like a kid is here: kid-safe until he goes back to sleep)")
+
 
 def shuffled_cycle(items):
     """Yield items in random order, reshuffling when used up, never repeating back to back."""
@@ -1029,14 +1072,17 @@ class Brain:
         self.history = []
 
     gentle = False
+    adult = False      # --adult-mode
+    kid_safe = False   # adult mode is off for this visit: a child might be there
     max_words = 20  # stop after the sentence that reaches this many words (--max-words)
 
     def system_prompt(self):
-        return self.system + (GENTLE_OVERRIDE if self.gentle else "")
+        return prompt_for(self)
 
     def reset(self):
         self.history = []
         self.gentle = False
+        self.kid_safe = False
 
     def prime(self, greeting):
         """Start a new conversation with the greeting Jim just shouted."""
@@ -1056,16 +1102,24 @@ class Brain:
                 messages=[{"role": "user", "content": [
                     {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                  "data": base64.b64encode(image).decode()}},
-                    {"type": "text", "text": VISION_GREETING_ASK}]}])
+                    {"type": "text", "text": VISION_GREETING_ASK + (
+                        " [If anyone in the picture might be a child, reply with exactly KIDS.]" if self.adult else "")}]}])
             if msg.stop_reason == "refusal":
                 self.last_vision = {"visible": None, "error": "refused"}
+                self.kid_safe = self.kid_safe or self.adult
                 return None
             said = "".join(b.text for b in msg.content if b.type == "text")
+            if self.adult and re.search(r"\bKIDS\b", said):
+                self.last_vision = {"visible": True, "children": True, "said": said}
+                self.kid_safe = True
+                print("     (the camera may see a child: kid-safe until he goes back to sleep)")
+                return None
             self.last_vision = {"visible": clean_greeting(said) is not None, "said": said}
             return clean_greeting(said)
         except Exception as e:
             print(f"[claude] vision greeting failed: {type(e).__name__}", file=sys.stderr)
             self.last_vision = {"visible": None, "error": f"{type(e).__name__} (too slow or failed)"}
+            self.kid_safe = self.kid_safe or self.adult
             return None
 
     def messages_with_image(self, image):
@@ -1081,6 +1135,8 @@ class Brain:
 
     def reply_sentences(self, user_text, image=None, from_kid=True):
         """Stream Claude's reply, yielding one sentence at a time."""
+        if from_kid:
+            kid_cue(self, user_text)
         if from_kid and UPSET_RE.search(user_text):   # only a child's words can switch on gentle mode
             if not self.gentle:
                 print("     (kid sounds scared/upset: gentle mode on)")
@@ -1090,6 +1146,8 @@ class Brain:
         if self.gentle:  # small models follow the latest message best, so remind every turn
             user_text += ("\n[Reminder: a child here is scared or upset. Reply softly and "
                           "kindly: no anger, no rants, no insults, no threats.]")
+        elif self.adult and not self.kid_safe:
+            user_text += ADULT_REMINDER
         self.history.append({"role": "user", "content": user_text})
         self.history = self.history[-30:]
         if self.history[0]["role"] != "user":
@@ -1153,14 +1211,17 @@ class OllamaBrain:
         self.history = []
 
     gentle = False
+    adult = False      # --adult-mode
+    kid_safe = False   # adult mode is off for this visit: a child might be there
     max_words = 20  # stop after the sentence that reaches this many words (--max-words)
 
     def system_prompt(self):
-        return self.system + (GENTLE_OVERRIDE if self.gentle else "")
+        return prompt_for(self)
 
     def reset(self):
         self.history = []
         self.gentle = False
+        self.kid_safe = False
 
     def prime(self, greeting):
         """Start a new conversation with the greeting Jim just shouted."""
@@ -1199,12 +1260,19 @@ class OllamaBrain:
                 answer = json.loads(json.loads(resp.read())["message"]["content"])
             self.last_vision = {"visible": bool(answer.get("trick_or_treaters_visible")),
                                 "said": answer.get("greeting") or "", "seen": (answer.get("seen") or "").strip()[:200]}
+            if self.adult:
+                self.last_vision["children"] = answer.get("children_visible") is not False
+                if self.last_vision["children"] and not self.kid_safe:
+                    self.kid_safe = True     # the greeting was written in adult mode: use a stock (kid-safe) one
+                    print("     (the camera may see a child: kid-safe until he goes back to sleep)")
+                    return None
             if not answer.get("trick_or_treaters_visible"):
                 return None
             return clean_greeting(answer.get("greeting"))
         except Exception as e:
             print(f"[ollama] vision greeting failed: {type(e).__name__}", file=sys.stderr)
             self.last_vision = {"visible": None, "error": f"{type(e).__name__} (too slow or failed)"}
+            self.kid_safe = self.kid_safe or self.adult     # couldn't check for kids: play it safe
             return None
 
     def messages_with_image(self, image):
@@ -1249,6 +1317,8 @@ class OllamaBrain:
 
     def reply_sentences(self, user_text, image=None, from_kid=True):
         import json
+        if from_kid:
+            kid_cue(self, user_text)
         if from_kid and UPSET_RE.search(user_text):   # only a child's words can switch on gentle mode
             if not self.gentle:
                 print("     (kid sounds scared/upset: gentle mode on)")
@@ -1258,6 +1328,8 @@ class OllamaBrain:
         if self.gentle:  # small models follow the latest message best, so remind every turn
             user_text += ("\n[Reminder: a child here is scared or upset. Reply softly and "
                           "kindly: no anger, no rants, no insults, no threats.]")
+        elif self.adult and not self.kid_safe:
+            user_text += ADULT_REMINDER
         self.history.append({"role": "user", "content": user_text})
         self.history = self.history[-30:]
         if self.history[0]["role"] != "user":
@@ -1832,6 +1904,9 @@ def build_parser():
     p.add_argument("--jim-id", default="", help="this Jim's id in the control panel (the other Jims there are his partners)")
     p.add_argument("--personality", default="jim", choices=list(PERSONALITIES),
                    help="who this pumpkin is: jim = the furious, grumpy Jim-o'-lantern; chris = his fabulous, flamboyant neighbor")
+    p.add_argument("--adult-mode", action="store_true",
+                   help="adults-only party: swearing, crude jokes and savage roasts. He goes back to kid-safe for "
+                        "the visit whenever the camera may see a child or a visitor sounds like one")
     p.add_argument("--banter", type=float, default=0.6,
                    help="with another Jim beside him: how often he answers his partner's lines (0 = never, 1 = always)")
     p.add_argument("--banter-max", type=int, default=2,
@@ -1981,6 +2056,9 @@ def main():
         brain = Brain(args.model, args.effort, args.house)
     brain.max_words = args.max_words
     brain.temperature = args.temperature
+    brain.adult = args.adult_mode
+    if brain.adult:
+        print("🔞 Adult mode: grown-up roasts, kid-safe whenever a child may be there.")
     brain.system = brain.system.replace(SYSTEM_PROMPT, persona["prompt"], 1)
     if persona["name"] == "Jim":
         brain.system = with_name(brain.system, args.name)
@@ -2091,7 +2169,7 @@ def main():
             tell("/duo/quiet", {"on": False})
             if self.text:
                 tell("/duo/said", {"name": args.name, "text": self.text, "kind": self.kind, "depth": self.depth,
-                                   "kid": self.kid, "gentle": brain.gentle})
+                                   "kid": self.kid, "gentle": brain.gentle, "kid_safe": brain.kid_safe})
 
     def name_in(text, name):
         return bool(re.search(rf"\b{re.escape(name)}\b", text or "", re.I))
@@ -2443,6 +2521,9 @@ def main():
                 voice.device = new.speaker
                 changed.append("speaker: " + new.speaker)
             voice.volume = max(0.05, min(1.5, new.volume))
+            if new.adult_mode != brain.adult:
+                brain.adult = new.adult_mode
+                changed.append("adult mode " + ("on" if brain.adult else "off"))
             args.mic, args.wled_gain, args.speaker = new.mic, new.wled_gain, new.speaker
             print("[jim] switched " + (", ".join(changed) if changed else "nothing (settings refreshed)") + " from the control panel", flush=True)
             return changed
@@ -2543,6 +2624,9 @@ def main():
                 last_heard = time.time()
                 if b.get("gentle"):
                     brain.gentle = voice.gentle = True
+                if b.get("kid_safe") and brain.adult and not brain.kid_safe:
+                    brain.kid_safe = True            # the partner's camera may see a child
+                    print("     (partner is kid-safe: so is he, until they go back to sleep)")
                 if not brain.gentle and int(b.get("depth") or 0) < args.banter_max and random.random() < args.banter:
                     banter(name, said_text, int(b.get("depth") or 0), b.get("kid"))
                 else:                                # just remember it, for the conversation

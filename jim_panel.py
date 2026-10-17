@@ -53,7 +53,7 @@ GROUPS = {
     "mic": [],                                   # saved mics ([mics] in config.toml) set mic, min_rms, vad_ratio, silence, wled_gain
     "voice": [("Voice", ["voice_design", "gentle_voice_design", "pitch", "intonation", "echo", "grit", "lip_offset"]),
               ("Engine", ["tts", "speech_url"])],
-    "responses": [("Personality", ["personality", "house", "temperature", "max_words"]),
+    "responses": [("Personality", ["personality", "adult_mode", "house", "temperature", "max_words"]),
                   ("Brain", ["brain", "ollama_model", "ollama_url", "keep_loaded"]),
                   ("Timing", ["reset_after", "eyes_timeout", "snooze", "start_delay"]),
                   ("Two Jims (with another Jim beside him)", ["banter", "banter_max"]),
@@ -1032,7 +1032,7 @@ class Panel(BaseHTTPRequestHandler):
                     vals.setdefault("voice_design", persona["voice"])
                     vals.setdefault("gentle_voice_design", persona["gentle_voice"])
                 write_settings(vals)
-                live_keys = {"camera_crop", "camera_source", "usb_camera"}
+                live_keys = {"camera_crop", "camera_source", "usb_camera", "adult_mode"}
                 if set(vals) <= live_keys:
                     return self.send(200, {"ok": True, "restart": False, "live": reload_jim()})
                 return self.send(200, {"ok": True, "restart": cur_jim().running()})
