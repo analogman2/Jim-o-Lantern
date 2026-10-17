@@ -144,6 +144,7 @@ table.dtab td{padding:8px;border-bottom:1px solid var(--line);font-variant-numer
 .srow .dt2{grid-column:2/4;font-size:12px;color:var(--mute);display:flex;gap:10px;align-items:center;min-width:0}
 .srow .dt2 span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.srow svg{width:80px;height:20px;flex:none}
 .srow .sdot{width:8px;height:8px;box-shadow:none;animation:none}
+.dash .media{position:relative}.fpsbadge{position:absolute;top:8px;right:8px;z-index:2;display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:99px;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;color:#fff;background:rgba(0,0,0,.45);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}.fpsbadge[hidden]{display:none}.fpsbadge i{width:7px;height:7px;border-radius:50%}
 </style></head><body>
 <header><h1>🎃</h1><div class="jims" id="jims"></div><button class="b sm" id="jimAdd" title="add another Jim">＋ Jim</button>
 <span style="margin-left:auto"></span>
@@ -164,7 +165,6 @@ table.dtab td{padding:8px;border-bottom:1px solid var(--line);font-variant-numer
    <div class="dp" data-id="think" data-stat="think" data-w="2" data-h="130"><div class="dt">Thinking</div><div class="dv">—</div><div class="ds">first sentence · median</div><svg class="dsp"></svg></div>
    <div class="dp" data-id="hear" data-stat="hear" data-w="2" data-h="130"><div class="dt">Hearing</div><div class="dv">—</div><div class="ds">speech → text · median</div><svg class="dsp"></svg></div>
    <div class="dp" data-id="vision" data-stat="vision" data-w="2" data-h="130"><div class="dt">Camera roast</div><div class="dv">—</div><div class="ds">at wake-up · median</div><svg class="dsp"></svg></div>
-   <div class="dp" data-id="fps" data-stat="fps" data-w="2" data-h="130"><div class="dt">Camera stream</div><div class="dv">—</div><div class="ds">frames / s</div><svg class="dsp"></svg></div>
    <div class="dp" data-id="wifi" data-stat="wifi" data-w="2" data-h="130"><div class="dt">LED Wi-Fi</div><div class="dv">—</div><div class="ds">signal</div><div class="gauge"><i></i></div></div>
    <div class="dp" data-id="e2e" data-stat="e2e" data-w="3" data-h="130"><div class="dt">End to end</div><div class="dv">—</div><div class="ds">kid stops talking → Jim's first sound · median</div><svg class="dsp"></svg></div>
    <div class="dp" data-id="pipe" data-w="9" data-h="130"><div class="dt">Where the time goes <span class="sub">· median of the last replies</span></div>
@@ -180,7 +180,7 @@ table.dtab td{padding:8px;border-bottom:1px solid var(--line);font-variant-numer
      <div class="vbar" style="cursor:default"><i id="spkLvl"></i></div>
      <div class="vread"><div class="dv" id="spkDb">—</div><div class="ds">dBFS</div><div class="ds" id="spkText" style="margin-top:8px"></div></div></div>
     <div class="sl" title="Jim's volume, live"><span class="ds">vol</span><input type="range" min="1" max="10" step="1" id="spkVol"><span class="ds" id="spkVolV"></span></div></div>
-   <div class="dp" data-id="live" data-w="4" data-h="360"><div class="dt">Live camera <select class="dsel" id="liveCamSel" title="the camera Jim looks through"></select></div><div class="media"><img class="view" id="live" alt=""><div class="ds" id="liveNote">Jim isn't running.</div></div></div>
+   <div class="dp" data-id="live" data-w="4" data-h="360"><div class="dt">Live camera <select class="dsel" id="liveCamSel" title="the camera Jim looks through"></select></div><div class="media"><span class="fpsbadge" id="liveFps" hidden></span><img class="view" id="live" alt=""><div class="ds" id="liveNote">Jim isn't running.</div></div></div>
    <div class="dp" data-id="judged" data-w="4" data-h="360"><div class="dt">Last frame Jim judged</div><div class="media"><img class="view" id="judged" alt=""><div class="verdict" id="verdict"></div></div></div>
    <div class="dp" data-id="resp" data-w="6" data-h="270"><div class="dt">Response times <span class="sub">· per reply, seconds</span></div><div class="chart" id="chResp"></div></div>
    <div class="dp" data-id="mic" data-w="6" data-h="270"><div class="dt">Mic level history <span class="sub">· dBFS, last 2 min · dashed = Jim reacts above</span></div><div class="chart" id="chMic"></div></div>
@@ -591,7 +591,8 @@ function paintDash() {
   $("pipe").innerHTML = total ? parts.map(p => p.v ? `<i style="width:${p.v / total * 100}%;background:${p.color}" title="${p.name}: ${fmtS(p.v)}">${p.v / total > .08 ? fmtS(p.v) : ""}</i>` : "").join("") : "";
   $("pipeLegend").innerHTML = total ? parts.map(p => `<span><i style="background:${p.color}"></i>${p.name} <b style="color:var(--ink)">${fmtS(p.v)}</b></span>`).join("")
     + `<span>= <b style="color:var(--ink)">${fmtS(total)}</b></span>` : `<span>Talk to Jim to measure this.</span>`;
-  stat("fps", cam ? cam.fps : null, cam ? cam.fps.toFixed(1) : "—", live.fps);
+  $("liveFps").hidden = !cam;                                    // frame rate, on the live picture itself
+  if (cam) { $("liveFps").innerHTML = `<i style="background:${color("fps", cam.fps)}"></i>${cam.fps.toFixed(1)} fps`; $("liveFps").title = `newest frame ${cam.age_s ?? "—"} s old · ${cam.reconnects} reconnects` }
   const me = JIMLIST.find(j => j.id === JIM)?.name, led = (net[`LED controller · ${me}`] || net["LED controller"])?.extra || {};
   stat("wifi", led.wifi ?? null, led.wifi != null ? led.wifi + "%" : "—");
   const n = Math.max(0, ...["hear", "think", "first_word"].map(k => (m[k] || []).length));
