@@ -66,7 +66,7 @@ pre.console{margin:0;max-height:300px;overflow:auto;font:12px/1.4 ui-monospace,m
 .dp.dragging{opacity:.85;outline:1px dashed var(--g-blue);z-index:4}
 .dp{background:var(--g-panel);border:1px solid var(--g-line);border-radius:4px;padding:6px 10px 8px;position:relative;overflow:hidden;min-width:0;display:flex;flex-direction:column}
 .dt{font-size:13px;font-weight:500;color:var(--g-text);margin:0 -10px 4px;padding:0 10px 2px;cursor:grab;display:flex;align-items:center;gap:6px;user-select:none;position:relative;z-index:2}
-.dt:hover{background:rgba(255,255,255,.03)}.dt .x{margin-left:auto;border:0;background:none;color:var(--g-mute);font-size:16px;line-height:1;cursor:pointer;padding:2px 4px;border-radius:3px;visibility:hidden}
+.dt:hover{background:rgba(255,255,255,.03)}@keyframes flash{0%,60%{box-shadow:0 0 0 2px var(--orange)}100%{box-shadow:0 0 0 2px transparent}}.dp.flash{animation:flash 1.6s ease-out}.dt .x{margin-left:auto;border:0;background:none;color:var(--g-mute);font-size:16px;line-height:1;cursor:pointer;padding:2px 4px;border-radius:3px;visibility:hidden}
 .dp:hover .dt .x{visibility:visible}
 .dsel{width:auto;max-width:60%;min-width:0;font-size:12px;padding:1px 4px;background:#22252b;border:1px solid #2c3235;border-radius:3px;color:var(--g-text);cursor:pointer}.dt .x:hover{color:var(--g-text);background:#2c3235}
 .rs{position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;z-index:3;background:linear-gradient(135deg,transparent 50%,#5a6066 50%,#5a6066 60%,transparent 60%,transparent 72%,#5a6066 72%,#5a6066 82%,transparent 82%)}
@@ -582,14 +582,14 @@ let layout = [], saved = null;
 const hit = (a, b) => a !== b && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 const shown = () => layout.filter(l => !l.hidden);
 function place(items) {                  // items without a position go into the first free spot, top to bottom
-  const done = [];
+  const done = items.filter(it => it.x != null && it.y != null);   // check against every placed panel, not just earlier ones
   for (const it of items) {
     if (it.x == null || it.y == null) {
       for (let y = 0, found = false; !found; y++) for (let x = 0; x + it.w <= COLS && !found; x++) {
         it.x = x; it.y = y; found = !done.some(d => hit(d, it));
       }
+      done.push(it);
     }
-    done.push(it);
   }
   return items;
 }
@@ -631,10 +631,11 @@ function applyLayout(fixed = null) {
     el.style.gridColumn = `${l.x + 1} / span ${l.w}`; el.style.gridRow = `${l.y + 1} / span ${l.h}`; el.style.height = "";
     el.style.order = l.y * COLS + l.x;                                   // phone width: one column in reading order
   }
-  const hidden = layout.filter(l => l.hidden);
-  $("dAdd").innerHTML = `<option value="">＋ Add panel${hidden.length ? ` (${hidden.length})` : ""}</option>` +
-    hidden.map(l => `<option value="${l.id}">${esc(panel(l.id).querySelector(".dt").firstChild.textContent.trim())}</option>`).join("");
-  $("dAdd").disabled = !hidden.length;
+  // every panel is listed: closed ones (x) are added back, ones already showing are scrolled to and highlighted
+  const hidden = layout.filter(l => l.hidden), title = l => esc(panel(l.id).querySelector(".dt").firstChild.textContent.trim());
+  $("dAdd").innerHTML = `<option value="">＋ Add panel${hidden.length ? ` (${hidden.length} closed)` : ""}</option>` +
+    (hidden.length ? `<optgroup label="Closed: add back">${hidden.map(l => `<option value="${l.id}">${title(l)}</option>`).join("")}</optgroup>` : "") +
+    `<optgroup label="Already showing: find it">${shown().map(l => `<option value="${l.id}">${title(l)}</option>`).join("")}</optgroup>`;
   paintDash(); paintSave();
 }
 function cellAt(clientX, clientY) {
@@ -680,7 +681,15 @@ for (const el of grid.children) {
     e.target.addEventListener("pointermove", move); e.target.addEventListener("pointerup", up);
   });
 }
-$("dAdd").onchange = e => { const l = layout.find(x => x.id === e.target.value); if (l) { l.hidden = false; l.x = l.y = null; applyLayout(); draft() } };
+$("dAdd").onchange = e => {
+  const l = layout.find(x => x.id === e.target.value);
+  if (!l) return;
+  if (l.hidden) { l.hidden = false; l.x = l.y = null; applyLayout(); draft() }   // back into the first free spot
+  else e.target.value = "";
+  const el = panel(l.id);
+  el.scrollIntoView({behavior: "smooth", block: "center"});
+  el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+};
 $("dReset").onclick = () => { layout = fromList([]); applyLayout(); draft() };
 $("dSave").onclick = async () => {
   try { await post("/api/layout", JSON.parse(snapshot())); saved = snapshot(); try { localStorage.removeItem("jimDashDraft") } catch (e) {} paintSave(); toast("Layout saved.") }
