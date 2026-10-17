@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Jim's control panel: http://127.0.0.1:8790 on this PC (only).
+"""Jim's control panel: http://127.0.0.1:8790 on this PC; with --lan also http://<this PC's IP>:8790 from devices on
+the home network and Tailscale (private addresses only, no sign-in).
 
 Start, stop and restart Jim; watch what he sees, hears and says; set his camera, mic, voice and replies (saved to
 jim.toml, comments kept); preview his voice; and play back recorded visits. The forms come from Jim's own options
 (pumpkin.build_parser), so a new option shows up here by adding it to a group below.
 
 Jim only runs while you start him here (or with ./start.sh); stopping the panel stops him.
-Usage: ./panel.sh [--port 8790]
+Usage: ./panel.sh [--port 8790] [--lan]
 """
 import argparse, base64, collections, itertools, json, os, re, shutil, signal, subprocess, sys, threading, time, tomllib, urllib.parse
+import ipaddress
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -815,12 +817,40 @@ SAFE_FILE = re.compile(r"^\d{2}-(frame\.jpg|kid\.wav|jim\.wav)$")
 
 
 # ---------------------------------------------------------------- HTTP
+TAILSCALE = ipaddress.ip_network("100.64.0.0/10")
+
+
+def allowed_client(addr):
+    """This PC; with --lan also private home-network addresses and Tailscale devices."""
+    ip = ipaddress.ip_address(addr)
+    return ip.is_loopback or (A.lan and (ip.is_private or ip in TAILSCALE))
+
+
 class Panel(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def parse_request(self):
+        if not super().parse_request():
+            return False
+        if not allowed_client(self.client_address[0]):   # --lan: home network and Tailscale only
+            self.send_error(403, "only devices on this home network or Tailscale")
+            return False
+        return True
+
     def local(self):
-        return self.headers.get("Host", "") in (f"127.0.0.1:{A.port}", f"localhost:{A.port}")
+        # the page must have been opened by an IP address (or localhost), never a domain name, so a website can't
+        # reach in by pointing its own name at this PC (DNS rebinding); with --lan, any allowed device's address
+        host, _, port = self.headers.get("Host", "").rpartition(":")
+        if port != str(A.port):
+            return False
+        if host == "localhost":
+            return True
+        try:
+            ip = ipaddress.ip_address(host.strip("[]"))
+        except ValueError:
+            return False
+        return ip.is_loopback or (A.lan and allowed_client(self.client_address[0]))
 
     def send(self, code, body, ctype="application/json"):
         if not isinstance(body, bytes):
@@ -1119,6 +1149,8 @@ class Panel(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Jim's control panel")
     ap.add_argument("--port", type=int, default=8790)
+    ap.add_argument("--lan", action="store_true",
+                    help="also answer devices on the home network and Tailscale (no sign-in), not just this PC")
     A = ap.parse_args()
 
     def bye(*_):
@@ -1132,7 +1164,8 @@ if __name__ == "__main__":
         print(f"Moved the old settings into {J.CONFIG} (camera passwords: {J.SECRETS})")
     threading.Thread(target=network_loop, daemon=True).start()
     threading.Thread(target=probe_camera_audio, daemon=True).start()
-    server = ThreadingHTTPServer(("127.0.0.1", A.port), Panel)
+    server = ThreadingHTTPServer(("0.0.0.0" if A.lan else "127.0.0.1", A.port), Panel)
     server.daemon_threads = True
-    print(f"Jim's control panel: http://127.0.0.1:{A.port}  (Ctrl+C stops the panel and Jim)")
+    print(f"Jim's control panel: http://127.0.0.1:{A.port}" + (" (and this PC's home-network/Tailscale IP)" if A.lan else "")
+          + "  (Ctrl+C stops the panel and Jim)")
     server.serve_forever()

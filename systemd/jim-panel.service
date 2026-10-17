@@ -1,10 +1,10 @@
 [Unit]
-Description=Jim-o-Lantern's control panel on 127.0.0.1:8790 (Jim himself runs only when started from it)
+Description=Jim-o-Lantern's control panel on port 8790, this PC plus home network and Tailscale (Jim himself runs only when started from it)
 After=network.target
 
 [Service]
 WorkingDirectory=%h/claude/ledProject
-ExecStart=%h/claude/ledProject/.venv/bin/python %h/claude/ledProject/jim_panel.py --port 8790
+ExecStart=%h/claude/ledProject/.venv/bin/python %h/claude/ledProject/jim_panel.py --port 8790 --lan
 Environment=PYTHONUNBUFFERED=1
 # stopping the panel stops Jim (he unloads his chat model on the way out)
 KillMode=mixed
