@@ -384,6 +384,8 @@ class Mic(threading.Thread):
         self.fixed = False               # --level-mode fixed: the trigger level is min_rms, whatever the background
         self.level_t = 0.0               # when the last sound frame arrived (a lost mic stops updating it)
         self.speech_end = 0.0            # when the latest utterance's last loud frame was heard (end-to-end timing)
+        self.on_warn = lambda text: None # set later: a problem worth showing in the control panel
+        self.capped = 0                  # sentences in a row that never went quiet
 
     def mute(self, why="self"):
         self.holds = getattr(self, "holds", set()) | {why}
@@ -484,6 +486,15 @@ class Mic(threading.Thread):
                     in_speech, loud_run, preroll = False, 0, []
                     if dur > 15:  # never went quiet: background got louder, so re-learn it
                         floor = float(np.percentile([np.sqrt(np.mean(f ** 2)) for f in speech], 20))
+                        self.capped += 1
+                        if self.fixed and self.capped == 2:   # a fixed level the background is above: every turn waits 15 s
+                            msg = (f"[mic] the background ({floor:.0f}) is above Jim's fixed reaction level ({self.min_rms:.0f}), "
+                                   f"so every sentence runs to the 15 s limit and he answers very late. Raise the level "
+                                   f"(drag the line above the background) or set the mic to automatic.")
+                            print(msg, file=sys.stderr, flush=True)
+                            self.on_warn("⚠️ " + msg[6:])
+                    else:
+                        self.capped = 0
                     if dur > 0.5:
                         self.speech_end = last_loud
                         audio = np.concatenate(speech)
@@ -2555,6 +2566,7 @@ def main():
                 print(f"[camera] movement ({camera.motion_level:.1f}% of the picture)", flush=True)
     camera.on_motion = on_motion if args.motion_wake else None
     mic.debug_levels = args.levels
+    mic.on_warn = lambda text: note(text)
     mic.fixed = args.level_mode == "fixed"
     mic.start()
 
