@@ -76,10 +76,12 @@ class Wled:
 
 # ----------------------------------------------------------------- the face
 
-SKIN = np.array([70, 18, 0], float)       # pumpkin flesh
-CANDLE = np.array([255, 130, 10], float)   # light shining through the mouth and nose
-EVIL = np.array([255, 25, 0], float)       # angry red-orange eyes
-LISTEN = np.array([255, 90, 0], float)     # eyes flare while someone talks
+# The curtain shows live data without gamma correction, so dim values look much brighter than their number:
+# the skin stays very dark and the carved features bright, or the face washes out.
+SKIN = np.array([12, 3, 0], float)        # pumpkin flesh
+CANDLE = np.array([255, 170, 30], float)   # light shining through the mouth and nose
+EVIL = np.array([255, 60, 0], float)       # angry red-orange eyes
+LISTEN = np.array([255, 120, 0], float)    # eyes flare while someone talks
 BLOOD = np.array([255, 0, 0], float)       # reveal strobe
 REVEAL_SECONDS = 2.2                       # length of the wake-up animation (and rumble)
 
@@ -112,8 +114,16 @@ def mouth_pixels(level):
     return px
 
 
+def rim(pixels):
+    """The skin pixels beside a carved feature (not diagonally): kept black so it stands out like a cut edge."""
+    inside = set(pixels)
+    return sorted({(y + dy, x + dx) for y, x in pixels for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1))
+                   if 0 <= y + dy < H and 0 <= x + dx < W and (y + dy, x + dx) not in inside})
+
+
 EYES = eye_pixels()
 MOUTHS = [mouth_pixels(i) for i in range(4)]
+RIMS = [rim(EYES + NOSE + m) for m in MOUTHS]   # one per mouth opening
 
 
 class Face(threading.Thread):
@@ -174,6 +184,7 @@ class Face(threading.Thread):
         else:                             # flames settle into the full pumpkin
             k = min(1.0, (t - 1.3) / (REVEAL_SECONDS - 1.3))
             frame[:] = SKIN * (2.5 - 1.5 * k) * flicker
+            self.draw(frame, RIMS[3 if k < 0.6 else 1], np.zeros(3))
             self.draw(frame, EYES, EVIL * flicker)
             self.draw(frame, NOSE, CANDLE * flicker * 0.8)
             self.draw(frame, MOUTHS[3 if k < 0.6 else 1], CANDLE * flicker)
@@ -182,16 +193,18 @@ class Face(threading.Thread):
 
     def awake_frame(self, now, flicker, smooth):
         frame = np.tile(SKIN * (0.85 + 0.15 * flicker), (H, W, 1))
-        glow = CANDLE * flicker
+        glow = CANDLE * (0.9 + 0.1 * flicker)    # the carved features barely dim with the flicker
         if self.state == "listening":
             eye_col = LISTEN
         elif self.state == "thinking":   # eyes smolder while it thinks of an insult
             eye_col = EVIL * (0.45 + 0.4 * (0.5 + 0.5 * np.sin(now * 9)))
         else:
-            eye_col = EVIL * (0.8 + 0.2 * flicker)
+            eye_col = EVIL * (0.92 + 0.08 * flicker)
+        mouth = min(3, int(round(smooth * 3)))
+        self.draw(frame, RIMS[mouth], np.zeros(3))
         self.draw(frame, EYES, eye_col)
         self.draw(frame, NOSE, glow * 0.8)
-        self.draw(frame, MOUTHS[min(3, int(round(smooth * 3)))], glow)
+        self.draw(frame, MOUTHS[mouth], glow)
         extra = np.tile(CANDLE * (0.25 + 0.5 * flicker * (0.5 + smooth)), (EXTRA_LEDS, 1))
         return frame, extra
 
