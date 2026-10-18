@@ -51,7 +51,8 @@ PYTHON = HERE / ".venv" / "bin" / "python"
 
 # tab -> [(section title, [option names])]; anything not listed isn't shown
 GROUPS = {
-    "camera": [("Picture sent to the AI", ["camera_crop", "camera_width"])],
+    "camera": [("Picture sent to the AI", ["camera_crop", "camera_width"]),
+               ("Wake on movement", ["motion_wake", "motion_area", "motion_region"])],
     "mic": [],                                   # saved mics ([mics] in config.toml) set mic, min_rms, vad_ratio, silence, wled_gain
     "voice": [("Voice", ["voice_design", "gentle_voice_design", "pitch", "intonation", "echo", "grit", "lip_offset"]),
               ("Engine", ["tts", "speech_url"])],
@@ -68,7 +69,8 @@ MANAGED = {k for groups in GROUPS.values() for _, keys in groups for k in keys}
 SLIDERS = {"pitch": (0.7, 0.06, 1.0), "intonation": (0.85, 0.15, 1.0), "echo": (0.0, 0.05, 0.0), "grit": (0.0, 0.06, 0.0),
            "lip_offset": (0.0, 0.025, None), "temperature": (0.2, 0.15, None), "max_words": (5, 5, None),
            "reset_after": (10, 10, None), "eyes_timeout": (10, 10, None), "snooze": (5, 5, None), "start_delay": (0, 15, None),
-           "brightness": (0.1, 0.1, None), "banter": (0.0, 0.1, None), "banter_max": (1, 1, None)}
+           "brightness": (0.1, 0.1, None), "banter": (0.0, 0.1, None), "banter_max": (1, 1, None),
+           "motion_area": (0.5, 0.5, None)}
 VOLUME = (0.25, 0.125)                           # the volume slider: 1-10 -> 0.25 .. 1.375; 7 = 1.0 (as made)
 LONG = {"voice_design", "gentle_voice_design", "house"}
 PICK = {"mic": "mics", "speaker": "speakers", "usb_camera": "cameras", "ollama_model": "models"}

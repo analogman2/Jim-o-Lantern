@@ -495,6 +495,8 @@ class Camera(threading.Thread):
     """Keeps the latest frame of an RTSP camera in memory as a small JPEG, so Jim can see
     the costumes. Frames are never written to disk."""
 
+    MOTION_W, MOTION_H = 64, 36                      # the tiny grey picture movement is measured on
+
     def __init__(self, url, crop=None, width=768, fps=2):
         super().__init__(daemon=True)
         self.url, self.width, self.fps = url, width, fps
@@ -502,6 +504,9 @@ class Camera(threading.Thread):
         self.frame, self.frame_time = None, 0.0
         self.lock = threading.Lock()
         self.times, self.reconnects = [], 0          # for the control panel's network card
+        # movement: on_motion() is called when enough of the watched region changes between frames
+        self.on_motion, self.motion_area, self.motion_region = None, 1.5, None
+        self.motion_level, self.prev_small, self.last_motion = 0.0, None, 0.0
 
     def stats(self):
         now = time.time()
@@ -509,6 +514,7 @@ class Camera(threading.Thread):
             recent = [t for t in self.times if now - t < 5]
             age = now - self.frame_time if self.frame_time else None
         return {"fps": round(len(recent) / 5, 1), "age_s": round(age, 1) if age is not None else None,
+                "motion": round(self.motion_level, 1),
                 "reconnects": self.reconnects, "kind": "usb" if (self.url or "").startswith("/dev/") else "rtsp" if self.url else "none"}
 
     def latest(self, max_age=3.0):
@@ -517,6 +523,37 @@ class Camera(threading.Thread):
             if self.frame and time.time() - self.frame_time < max_age:
                 return self.frame
         return None
+
+    def motion_score(self, small):
+        """Percent of the watched region that changed since the last frame (0 for a lighting change: porch light,
+        headlights or the camera switching to night mode change most of the picture at once)."""
+        prev, self.prev_small = self.prev_small, small
+        if prev is None:
+            return 0.0
+        diff = np.abs(small.astype(np.int16) - prev.astype(np.int16))
+        if self.motion_region:
+            x, y, w, h = self.motion_region
+            r0, c0 = int(y * self.MOTION_H), int(x * self.MOTION_W)
+            diff = diff[r0:max(r0 + 1, int((y + h) * self.MOTION_H)), c0:max(c0 + 1, int((x + w) * self.MOTION_W))]
+        changed = float((diff > 22).mean()) * 100
+        return 0.0 if changed > 45 else changed
+
+    def watch_motion(self, pipe):
+        """Reads the tiny grey frames of one ffmpeg run; calls on_motion (at most once a second) when they move."""
+        n = self.MOTION_W * self.MOTION_H
+        self.prev_small = None
+        with pipe:
+            while True:
+                raw = b""
+                while len(raw) < n:
+                    chunk = pipe.read(n - len(raw))
+                    if not chunk:
+                        return                        # ffmpeg stopped (reconnect or camera switch)
+                    raw += chunk
+                self.motion_level = self.motion_score(np.frombuffer(raw, np.uint8).reshape(self.MOTION_H, self.MOTION_W))
+                if self.on_motion and self.motion_level >= self.motion_area and time.time() - self.last_motion > 1:
+                    self.last_motion = time.time()
+                    self.on_motion()
 
     def set_url(self, url, crop=None):
         """Look through another camera (None = blind) without restarting Jim."""
@@ -534,16 +571,24 @@ class Camera(threading.Thread):
             if not url:
                 time.sleep(0.5)
                 continue
-            vf = f"fps={self.fps},scale={self.width}:-2"
+            crop = ""
             if self.crop:
                 x, y, w, h = self.crop
-                vf = f"crop=iw*{w}:ih*{h}:iw*{x}:ih*{y}," + vf
+                crop = f"crop=iw*{w}:ih*{h}:iw*{x}:ih*{y},"
             if url.startswith("/dev/"):              # a USB webcam
                 src = ["-f", "v4l2", "-input_format", "mjpeg", "-video_size", "848x480", "-i", url]
             else:                                    # the security camera (RTSP)
                 src = ["-rtsp_transport", "tcp", "-i", url]
-            self.proc = proc = subprocess.Popen(["ffmpeg", "-loglevel", "error", *src, "-an", "-vf", vf, "-f", "image2pipe",
-                                                 "-vcodec", "mjpeg", "-q:v", "4", "-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            # one ffmpeg, two outputs: the JPEGs Jim looks at, and a tiny grey picture for spotting movement
+            small_r, small_w = os.pipe()
+            graph = (f"[0:v]{crop}fps={self.fps},split=2[a][b];[a]scale={self.width}:-2[big];"
+                     f"[b]scale={self.MOTION_W}:{self.MOTION_H},format=gray[small]")
+            self.proc = proc = subprocess.Popen(["ffmpeg", "-loglevel", "error", *src, "-an", "-filter_complex", graph,
+                                                 "-map", "[big]", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "4", "pipe:1",
+                                                 "-map", "[small]", "-f", "rawvideo", f"pipe:{small_w}"],
+                                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, pass_fds=(small_w,))
+            os.close(small_w)
+            threading.Thread(target=self.watch_motion, args=(os.fdopen(small_r, "rb", buffering=0),), daemon=True).start()
             buf = b""
             while chunk := proc.stdout.read(65536):
                 buf += chunk
@@ -1998,6 +2043,13 @@ def build_parser():
                    help="zoom the camera on the spot in front of the pumpkin, as fractions of "
                         "the frame, e.g. 0.3,0.4,0.4,0.5")
     p.add_argument("--camera-width", type=int, default=768, help="width of frames sent to the AI")
+    p.add_argument("--motion-wake", action="store_true",
+                   help="movement in the camera picture counts like a noise: eyes on, then awake if it keeps moving")
+    p.add_argument("--motion-area", type=float, default=1.5,
+                   help="percent of the watched area that has to change to count as movement (higher = only big movement)")
+    p.add_argument("--motion-region", default="", metavar="X,Y,W,H",
+                   help="the part of the camera picture to watch for movement, as fractions (e.g. the path to the door: "
+                        "0.2,0.5,0.6,0.5); empty = all of it")
     p.add_argument("--camera-source", default="auto", choices=["auto", "rtsp", "usb", "none"],
                    help="where Jim looks: rtsp = the security camera (./set_camera.sh), usb = a USB "
                         "webcam (--usb-camera), none = blind; auto = the security camera if one is set up")
@@ -2135,8 +2187,19 @@ def main():
             print("[camera] no camera chosen (control panel: Camera tab, or camera_id in config.toml): Jim is blind", file=sys.stderr)
         return url, tuple(float(v) for v in a.camera_crop.split(",")) if a.camera_crop else None
 
+    def motion_region(a):
+        try:
+            r = tuple(float(v) for v in a.motion_region.split(",")) if a.motion_region.strip() else None
+        except ValueError:
+            r = None
+        if r and (len(r) != 4 or not all(0 <= v <= 1 for v in r)):
+            print("[camera] motion_region must be four fractions X,Y,W,H: watching the whole picture", file=sys.stderr)
+            r = None
+        return r
+
     url, crop = camera_choice(args)
     camera = Camera(url, crop, args.camera_width)        # always there, so the panel can switch cameras while he runs
+    camera.motion_area, camera.motion_region = args.motion_area, motion_region(args)
     camera.start()
     if url:
         brain.system += VISION_RULES
@@ -2410,6 +2473,16 @@ def main():
     source = mic_source(args)
     mic = Mic(source, args.vad_ratio, args.min_rms, args.silence, on_speech_start,
               on_noise=lambda: noises.put(time.time()))
+    motion_note = [0.0]
+
+    def on_motion():
+        """Movement in front of the camera counts like a noise (only matters while he's dark or just has his eyes on)."""
+        if mode_box[0] in ("dark", "eyes"):
+            noises.put(time.time())
+            if time.time() - motion_note[0] > 10:
+                motion_note[0] = time.time()
+                print(f"[camera] movement ({camera.motion_level:.1f}% of the picture)", flush=True)
+    camera.on_motion = on_motion if args.motion_wake else None
     mic.debug_levels = args.levels
     mic.fixed = args.level_mode == "fixed"
     mic.start()
@@ -2571,6 +2644,8 @@ def main():
                 mic.set_source(mic_source(new))
                 changed.append("mic: " + new.mic)
             mic.min_rms = new.min_rms if new.min_rms is not None else (500 if new.mic == "wled" else 300)
+            camera.on_motion = on_motion if new.motion_wake else None
+            camera.motion_area, camera.motion_region = new.motion_area, motion_region(new)
             mic.fixed, mic.vad_ratio, mic.silence_s = new.level_mode == "fixed", new.vad_ratio, new.silence
             if new.speaker != voice.device:
                 voice.device = new.speaker
