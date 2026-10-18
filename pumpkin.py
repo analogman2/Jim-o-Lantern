@@ -14,6 +14,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 
 import numpy as np
 
@@ -1277,6 +1279,44 @@ class Brain:
         self.history.append({"role": "assistant", "content": full.strip() or "Hmph!"})
 
 
+class GpuFull(Exception):
+    """The chat model doesn't fit on the GPU (Jim never runs it on the CPU)."""
+
+
+def app_name(path):
+    """A readable name for a GPU process, from its path."""
+    for key, name in (("ollama", "Ollama"), (".hermes", "Hermes"), ("venv-speech", "speech service"), ("ComfyUI", "ComfyUI"),
+                      ("yue2", "Agentora"), ("ledProject", "Jim")):
+        if key in path:
+            return name
+    return os.path.basename(path)
+
+
+def gpu_users():
+    """What's using the GPU right now, for the message when Jim's brain doesn't fit."""
+    parts = []
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=5).stdout.split(",")
+        used, total = int(out[0]), int(out[1])
+        parts.append(f"GPU: {used / 1024:.1f} of {total / 1024:.1f} GB in use.")
+        apps = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,used_memory,process_name", "--format=csv,noheader,nounits"],
+                              capture_output=True, text=True, timeout=5).stdout.splitlines()
+        big = sorted((int(a.split(",")[1]), a.split(",")[2].strip()) for a in apps if a.count(",") >= 2)[::-1][:5]
+        if big:
+            parts.append("Biggest users: " + ", ".join(f"{app_name(name)} {mb / 1024:.1f} GB" for mb, name in big) + ".")
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        pass
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:11434/api/ps", timeout=3) as r:
+            models = [f"{m['name']} {m.get('size_vram', 0) / 2**30:.1f} GB" for m in json.loads(r.read()).get("models", [])]
+        if models:
+            parts.append("Loaded in Ollama: " + ", ".join(models) + ".")
+    except (OSError, ValueError):
+        pass
+    return " ".join(parts)
+
+
 class OllamaBrain:
     """Same interface as Brain, but talks to a local Ollama model. No API key needed."""
 
@@ -1318,7 +1358,8 @@ class OllamaBrain:
             "model": self.model, "messages": messages, "stream": stream,
             "think": False,          # qwen-style reasoning just adds latency here
             "keep_alive": self.keep_alive,  # how long Ollama keeps the model on the GPU
-            "options": {"num_predict": max_tokens, "temperature": self.temperature, "num_ctx": 4096},
+            # num_gpu 999: every layer on the GPU, or fail; never a slow half-CPU model (see check_on_gpu)
+            "options": {"num_predict": max_tokens, "temperature": self.temperature, "num_ctx": 4096, "num_gpu": 999},
         }
         if schema:
             body["format"] = schema
@@ -1388,12 +1429,40 @@ class OllamaBrain:
         except Exception:
             return False
 
+    def placement(self):
+        """(bytes on the GPU, total bytes) of the loaded model, from Ollama; None if it isn't loaded."""
+        import urllib.request
+        with urllib.request.urlopen(f"{self.url}/api/ps", timeout=3) as r:
+            for m in json.loads(r.read()).get("models", []):
+                if m.get("name") == self.model:
+                    return m.get("size_vram", 0), m.get("size", 0)
+        return None
+
+    def check_on_gpu(self):
+        """Jim's brain runs on the GPU or not at all: a model partly on the CPU answers far too slowly."""
+        where = self.placement()
+        if where and where[0] < where[1]:
+            gpu, total = where
+            self.unload()
+            raise GpuFull(f"Chat model {self.model} doesn't fit on the GPU: only {gpu / 2**30:.1f} of "
+                          f"{total / 2**30:.1f} GB went on it and the rest would run on the CPU, so Jim stopped. "
+                          f"Free {(total - gpu) / 2**30:.1f} GB or more and start him again. {gpu_users()}")
+
     def warm_up(self):
         print(f"Chat model {self.model}: "
               + ("already loaded in Ollama" if self.loaded() else "loading in Ollama..."))
         # include the system prompt so the slow first-time prompt processing happens now
-        self._chat([{"role": "system", "content": self.system},
-                    {"role": "user", "content": "hi"}], stream=False).read()
+        try:
+            self._chat([{"role": "system", "content": self.system},
+                        {"role": "user", "content": "hi"}], stream=False).read()
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="replace")
+            if "out of memory" in detail or "cudaMalloc" in detail:
+                raise GpuFull(f"Chat model {self.model} doesn't fit on the GPU (Ollama ran out of GPU memory), and Jim "
+                              f"never runs it on the CPU, so he stopped. Free some GPU memory and start him again. "
+                              f"{gpu_users()}") from None
+            raise
+        self.check_on_gpu()
 
     def reply_sentences(self, user_text, image=None, from_kid=True):
         import json
@@ -2321,6 +2390,8 @@ def main():
         atexit.register(brain.unload)  # nothing of Jim stays on the GPU after he stops
         try:
             brain.warm_up()  # after the prompt is final, so the slow first pass happens now
+        except GpuFull as e:
+            sys.exit(f"🛑 {e}")
         except Exception as e:
             sys.exit(f"Couldn't reach Ollama at {args.ollama_url} ({e}). Is it running? "
                      f"Is the model pulled? (ollama pull {args.ollama_model})")
