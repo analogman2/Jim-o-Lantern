@@ -1336,6 +1336,7 @@ class OllamaBrain:
 
     def __init__(self, model, url, extra_prompt):
         self.model, self.url = model, url.rstrip("/")
+        self.reload_lock = threading.Lock()
         self.system = SYSTEM_PROMPT + (f"\n\nAbout this house tonight: {extra_prompt}"
                                        if extra_prompt else "")
         self.history = []
@@ -1383,6 +1384,11 @@ class OllamaBrain:
         """A roast of what the camera shows, or None if nobody is clearly visible."""
         import base64
         import json
+        if hasattr(self, "ensure_loaded") and not self.loaded():   # evicted: reload now, greet with a stock line meanwhile
+            threading.Thread(target=self.ensure_loaded, daemon=True).start()
+            self.last_vision = {"visible": None, "error": "the chat model was being loaded again"}
+            self.kid_safe = self.kid_safe or self.audience != "kid"
+            return None
         try:
             with self._chat([{"role": "system", "content": self.system_prompt()},
                              {"role": "user", "content": VISION_GREETING_ASK_JSON,
@@ -1449,6 +1455,52 @@ class OllamaBrain:
                     return m.get("size_vram", 0), m.get("size", 0)
         return None
 
+    broker = os.environ.get("GPU_BROKER", "http://127.0.0.1:7890")   # Agentora's GPU broker: who gets the card
+    gpu_mb = 6500                                                     # the 9B with its vision part, as the broker counts it
+
+    def broker_call(self, path, body=None, method=None, timeout=5):
+        req = urllib.request.Request(self.broker + path, json.dumps(body).encode() if body is not None else None,
+                                     {"Content-Type": "application/json"}, method=method)
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read() or b"{}")
+
+    def ensure_loaded(self, wait_s=20):
+        """The GPU broker unloads idle models to make room for other apps (the Image & Video Studio, the assistant).
+        If that happened, ask it for room again and load the model back before Jim needs it. True when it's on the GPU."""
+        if self.loaded():
+            return True
+        with self.reload_lock:                       # one reload at a time; later callers wait for it
+            if self.loaded():
+                return True
+            t0, lease = time.time(), None
+            print(f"[ollama] {self.model} was taken off the GPU for another app: loading it again...", flush=True)
+            try:                                     # the broker makes room: an idle ComfyUI and idle models step aside
+                lease = self.broker_call("/lease", {"client": "jim", "kind": "interactive", "mem_mb": self.gpu_mb,
+                                                    "wait_s": wait_s, "ttl_s": 120}, timeout=wait_s + 10)
+            except Exception:
+                pass                                 # no broker: just try
+            try:
+                self._chat([{"role": "system", "content": self.system}, {"role": "user", "content": "hi"}],
+                           stream=False, max_tokens=1, timeout=120).read()
+                gpu, total = self.placement() or (0, 1)
+                if gpu < total:                      # squeezed partly onto the CPU: never run like that
+                    self.unload()
+                    print(f"[ollama] not enough GPU room to load {self.model} fully; Jim will use stock lines. {gpu_users()}",
+                          file=sys.stderr, flush=True)
+                    return False
+                print(f"[ollama] {self.model} is back on the GPU ({time.time() - t0:.1f} s)", flush=True)
+                return True
+            except Exception as e:
+                detail = e.read().decode(errors="replace")[:200] if isinstance(e, urllib.error.HTTPError) else str(e)
+                print(f"[ollama] couldn't load {self.model} again ({detail}). {gpu_users()}", file=sys.stderr, flush=True)
+                return False
+            finally:
+                if lease and lease.get("id"):
+                    try:
+                        self.broker_call(f"/lease/{lease['id']}", method="DELETE")
+                    except Exception:
+                        pass
+
     def check_on_gpu(self):
         """Jim's brain runs on the GPU or not at all: a model partly on the CPU answers far too slowly."""
         where = self.placement()
@@ -1495,6 +1547,7 @@ class OllamaBrain:
         if self.history[0]["role"] != "user":
             self.history = self.history[1:]
         full, buf, stopped = "", "", False
+        self.ensure_loaded()                         # taken off the GPU for another app: load it back first
         try:
             with self._chat([{"role": "system", "content": self.system_prompt()}]
                             + self.messages_with_image(image)) as resp:
@@ -2537,6 +2590,8 @@ def main():
         service unloads them after 2 quiet minutes; reloading the voice takes about 8 s)."""
         threading.Thread(target=lambda: (voice.warm() if hasattr(voice, "warm") else None,
                                          ears.warm()), daemon=True).start()
+        if hasattr(brain, "ensure_loaded"):          # and the chat model, if another app took it off the GPU
+            threading.Thread(target=brain.ensure_loaded, daemon=True).start()
 
     noises = queue.Queue()
 
