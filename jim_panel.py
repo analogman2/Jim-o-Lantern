@@ -11,8 +11,9 @@ Usage: ./panel.sh [--port 8790] [--lan]
 """
 import argparse, base64, collections, itertools, json, os, re, shutil, signal, subprocess, sys, threading, time, tomllib, urllib.parse
 import ipaddress
+import logging
 import urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +22,12 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import pumpkin as P  # noqa: E402
 import jimconfig as J  # noqa: E402  (config.toml + secrets.toml in ~/.config/jim/)
+import applog  # noqa: E402
+
+log = logging.getLogger("jim-panel")
+_TAG = re.compile(r"^\s*\[(\w+)\]")                 # pumpkin's "[mic] ..." style component tags
+_TROUBLE = re.compile(r"\b(error|errors|failed|fails|couldn'?t|could not|cannot|can'?t|not reachable|lost|"
+                      r"unavailable|timed out|timeout|refused|missing|invalid|blind)\b", re.I)
 
 _tl = threading.local()                           # the Jim the current request is about (?jim=<id>)
 
@@ -655,14 +662,35 @@ class Jim:
                                          env=dict(os.environ, PYTHONUNBUFFERED="1"), text=True, bufsize=1,
                                          start_new_session=True)   # terminal signals go to the panel; it stops Jim
             self.started = time.time()
+            applog.event(log, f"started {self.inst['name']} (pid {self.proc.pid})", event="jim_started",
+                         jim=self.inst["name"], jim_id=self.inst["id"], pid=self.proc.pid)
             threading.Thread(target=self.read, args=(self.proc,), daemon=True).start()
 
     def read(self, proc):
+        tb = []                                   # a traceback in progress: sent to Graylog as one record
         for line in proc.stdout:
-            self.log.append(line.rstrip("\n"))
+            line = line.rstrip("\n")
+            self.log.append(line)
+            if tb or line.startswith("Traceback (most recent call last)"):
+                tb.append(line)
+                if not line.startswith((" ", "Traceback")):          # the exception line ends it
+                    self.forward("\n".join(tb), logging.ERROR)
+                    tb = []
+            elif line.strip():
+                self.forward(line)
         code = proc.wait()
         why = f"signal {signal.Signals(-code).name}" if code < 0 else f"exit {code}"
         self.log.append(f"--- {self.inst['name']} stopped ({why}) at {time.strftime('%H:%M:%S')}")
+        applog.event(log, f"{self.inst['name']} stopped ({why})", logging.INFO if code in (0, -15) else logging.WARNING,
+                     event="jim_stopped", jim=self.inst["name"], jim_id=self.inst["id"], exit_code=code,
+                     run_seconds=round(time.time() - self.started))
+
+    def forward(self, text, level=None):
+        """One line of Jim's own output to Graylog (app=jim; the journal doesn't get these, the panel's Log tab does)."""
+        m = _TAG.match(text)
+        applog.event("jim.pumpkin", text, level or (logging.WARNING if _TROUBLE.search(text) else logging.INFO),
+                     console=False, app="jim", jim=self.inst["name"], jim_id=self.inst["id"],
+                     component=m.group(1) if m else None)
 
     def stop(self, pid=None):
         """Stop Jim (he unloads his chat model on the way out); pid = a copy started elsewhere."""
@@ -828,7 +856,7 @@ def allowed_client(addr):
     return ip.is_loopback or (A.lan and (ip.is_private or ip in TAILSCALE))
 
 
-class Panel(BaseHTTPRequestHandler):
+class Panel(applog.RequestLog, BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
@@ -1117,6 +1145,7 @@ class Panel(BaseHTTPRequestHandler):
         except (ValueError, OSError, tomllib.TOMLDecodeError) as e:
             return self.send(400, {"error": str(e)})
         except Exception as e:
+            log.exception("POST %s failed", path, extra={"http_path": path})
             return self.send(500, {"error": f"{type(e).__name__}: {e}"})
         self.send(404, {"error": "not found"})
 
@@ -1154,6 +1183,7 @@ if __name__ == "__main__":
     ap.add_argument("--lan", action="store_true",
                     help="also answer devices on the home network and Tailscale (no sign-in), not just this PC")
     A = ap.parse_args()
+    applog.setup("jim-panel")
 
     def bye(*_):
         for j in list(JIMS.values()):                # nothing of any Jim outlives the panel
@@ -1163,11 +1193,11 @@ if __name__ == "__main__":
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(sig, bye)
     if J.migrate(HERE):
-        print(f"Moved the old settings into {J.CONFIG} (camera passwords: {J.SECRETS})")
+        log.info("Moved the old settings into %s (camera passwords: %s)", J.CONFIG, J.SECRETS)
     threading.Thread(target=network_loop, daemon=True).start()
     threading.Thread(target=probe_camera_audio, daemon=True).start()
-    server = ThreadingHTTPServer(("0.0.0.0" if A.lan else "127.0.0.1", A.port), Panel)
+    server = applog.server(("0.0.0.0" if A.lan else "127.0.0.1", A.port), Panel)
     server.daemon_threads = True
-    print(f"Jim's control panel: http://127.0.0.1:{A.port}" + (" (and this PC's home-network/Tailscale IP)" if A.lan else "")
-          + "  (Ctrl+C stops the panel and Jim)")
+    log.info("Jim's control panel: http://127.0.0.1:%s%s  (Ctrl+C stops the panel and Jim)", A.port,
+             " (and this PC's home-network/Tailscale IP)" if A.lan else "")
     server.serve_forever()
