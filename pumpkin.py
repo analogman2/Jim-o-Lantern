@@ -85,6 +85,19 @@ CANDLE = np.array([255, 170, 30], float)   # light shining through the mouth and
 EVIL = np.array([255, 60, 0], float)       # angry red-orange eyes
 LISTEN = np.array([255, 120, 0], float)    # eyes flare while someone talks
 BLOOD = np.array([255, 0, 0], float)       # reveal strobe
+# each personality's face colors (same roles as above); Chris is pink and purple
+COLORS = {
+    "jim": {"skin": SKIN, "candle": CANDLE, "evil": EVIL, "listen": LISTEN, "blood": BLOOD, "strip": CANDLE},
+    "chris": {"skin": np.array([3, 0, 8], float),         # very dark indigo flesh, so the features pop
+              "candle": np.array([255, 0, 90], float),    # hot pink light through the mouth and nose
+              "evil": np.array([60, 0, 255], float),      # electric blue-violet eyes
+              "listen": np.array([140, 60, 255], float),  # eyes flare brighter violet while someone talks
+              "blood": np.array([90, 0, 255], float),     # violet reveal strobe
+              "strip": np.array([60, 0, 255], float),     # side strips alternate pink and purple
+              "reveal": "sparkle"},                       # wakes up in a shower of rainbow fairy glitter
+}
+PRIDE = [np.array(c, float) for c in ((255, 0, 0), (255, 90, 0), (255, 220, 0), (0, 255, 40), (0, 80, 255), (150, 0, 255))]
+GLITTER = [np.array(c, float) for c in ((255, 255, 255), (255, 120, 220), (255, 0, 120), (140, 60, 255))]
 REVEAL_SECONDS = 2.2                       # length of the wake-up animation (and rumble)
 
 
@@ -135,9 +148,13 @@ class Face(threading.Thread):
     States: dark (all off) -> eyes (only the eyes glow) -> reveal (scary wake-up
     animation) -> idle / listening / thinking / talking (full pumpkin)."""
 
-    def __init__(self, wled):
+    def __init__(self, wled, colors=None):
         super().__init__(daemon=True)
         self.wled = wled
+        c = colors or COLORS["jim"]
+        self.skin, self.candle, self.evil, self.listen, self.blood = (c[k] for k in ("skin", "candle", "evil", "listen", "blood"))
+        self.reveal_style = c.get("reveal", "scary")
+        self.strip = np.array([self.candle if i % 2 == 0 else c["strip"] for i in range(EXTRA_LEDS)])  # side strips
         self.state = "dark"
         self.reveal_start = 0.0
         self.mouth_events = []  # [(play_time, level 0..1)], in time order
@@ -167,47 +184,88 @@ class Face(threading.Thread):
         """Just the eyes, glowing and slowly pulsing in the dark."""
         frame = np.zeros((H, W, 3))
         k = 0.35 + 0.2 * np.sin(now * 2.2) + 0.1 * random.random()
-        self.draw(frame, EYES, EVIL * k)
+        self.draw(frame, EYES, self.evil * k)
         return frame, np.zeros((EXTRA_LEDS, 3))
 
     def reveal_frame(self, t, flicker):
+        if self.reveal_style == "sparkle":
+            return self.sparkle_reveal_frame(t, flicker)
+        return self.scary_reveal_frame(t, flicker)
+
+    def sparkle_reveal_frame(self, t, flicker):
+        """Fairy dust: glitter twinkles in, a rainbow of sparkles sweeps across, then the face fades in through it."""
+        frame = np.zeros((H, W, 3))
+        extra = np.zeros((EXTRA_LEDS, 3))
+        if t < 0.6:                       # twinkles appear, more and more
+            density = 0.04 + 0.25 * t
+        elif t < 1.3:                     # a diagonal rainbow band of glitter sweeps left to right
+            density = 0.06
+            pos = (t - 0.6) / 0.7 * (W + H) - H
+            for y in range(H):
+                for x in range(W):
+                    d = abs(x + (H - 1 - y) * 0.6 - pos)
+                    if d < 3 and random.random() < 0.85 - 0.25 * d:
+                        frame[y, x] = PRIDE[int(x + y + t * 20) % len(PRIDE)] * (1 - d / 3.5)
+            k = (t - 0.6) / 0.7           # rainbow chases up the side strips
+            lit = int(k * EXTRA_LEDS)
+            for i in range(lit):
+                extra[i] = PRIDE[(i // 3 + int(t * 12)) % len(PRIDE)] * (0.4 + 0.6 * random.random())
+        else:                             # the face fades in through the last of the glitter
+            k = min(1.0, (t - 1.3) / (REVEAL_SECONDS - 1.3))
+            density = 0.12 * (1 - k)
+            frame[:] = self.skin * k * flicker
+            self.draw(frame, RIMS[1], np.zeros(3))
+            self.draw(frame, EYES, self.evil * k)
+            self.draw(frame, NOSE, self.candle * k * 0.8)
+            self.draw(frame, MOUTHS[1], self.candle * k)
+            extra[:] = self.strip * (0.25 + 0.75 * (1 - k))
+        for y in range(H):                # glitter: white, pink and violet pinpricks
+            for x in range(W):
+                if random.random() < density:
+                    frame[y, x] = GLITTER[random.randrange(len(GLITTER))] * (0.5 + 0.5 * random.random())
+        for i in range(EXTRA_LEDS):
+            if random.random() < density:
+                extra[i] = GLITTER[random.randrange(len(GLITTER))]
+        return frame, extra
+
+    def scary_reveal_frame(self, t, flicker):
         """Eyes flare, the whole pumpkin strobes blood red, then settles in."""
         frame = np.zeros((H, W, 3))
         extra = np.zeros((EXTRA_LEDS, 3))
         if t < 0.6:                       # eyes sputter and flare up
             if random.random() < 0.3 + t:
-                self.draw(frame, EYES, EVIL * min(1.0, 0.4 + t * 1.5))
+                self.draw(frame, EYES, self.evil * min(1.0, 0.4 + t * 1.5))
         elif t < 1.3:                     # full-curtain red strobe, mouth gaping
             if int(t * 16) % 2 == 0:
-                frame[:] = BLOOD * 0.9
-                extra[:] = BLOOD
+                frame[:] = self.blood * 0.9
+                extra[:] = self.blood
             self.draw(frame, EYES, np.array([255, 255, 200.0]))
             self.draw(frame, MOUTHS[3], np.array([255, 255, 200.0]))
         else:                             # flames settle into the full pumpkin
             k = min(1.0, (t - 1.3) / (REVEAL_SECONDS - 1.3))
-            frame[:] = SKIN * (2.5 - 1.5 * k) * flicker
+            frame[:] = self.skin * (2.5 - 1.5 * k) * flicker
             self.draw(frame, RIMS[3 if k < 0.6 else 1], np.zeros(3))
-            self.draw(frame, EYES, EVIL * flicker)
-            self.draw(frame, NOSE, CANDLE * flicker * 0.8)
-            self.draw(frame, MOUTHS[3 if k < 0.6 else 1], CANDLE * flicker)
-            extra[:] = CANDLE * (1.0 - 0.6 * k) * flicker
+            self.draw(frame, EYES, self.evil * flicker)
+            self.draw(frame, NOSE, self.candle * flicker * 0.8)
+            self.draw(frame, MOUTHS[3 if k < 0.6 else 1], self.candle * flicker)
+            extra[:] = self.strip * (1.0 - 0.6 * k) * flicker
         return frame, extra
 
     def awake_frame(self, now, flicker, smooth):
-        frame = np.tile(SKIN * (0.85 + 0.15 * flicker), (H, W, 1))
-        glow = CANDLE * (0.9 + 0.1 * flicker)    # the carved features barely dim with the flicker
+        frame = np.tile(self.skin * (0.85 + 0.15 * flicker), (H, W, 1))
+        glow = self.candle * (0.9 + 0.1 * flicker)    # the carved features barely dim with the flicker
         if self.state == "listening":
-            eye_col = LISTEN
+            eye_col = self.listen
         elif self.state == "thinking":   # eyes smolder while it thinks of an insult
-            eye_col = EVIL * (0.45 + 0.4 * (0.5 + 0.5 * np.sin(now * 9)))
+            eye_col = self.evil * (0.45 + 0.4 * (0.5 + 0.5 * np.sin(now * 9)))
         else:
-            eye_col = EVIL * (0.92 + 0.08 * flicker)
+            eye_col = self.evil * (0.92 + 0.08 * flicker)
         mouth = min(3, int(round(smooth * 3)))
         self.draw(frame, RIMS[mouth], np.zeros(3))
         self.draw(frame, EYES, eye_col)
         self.draw(frame, NOSE, glow * 0.8)
         self.draw(frame, MOUTHS[mouth], glow)
-        extra = np.tile(CANDLE * (0.25 + 0.5 * flicker * (0.5 + smooth)), (EXTRA_LEDS, 1))
+        extra = self.strip * (0.25 + 0.5 * flicker * (0.5 + smooth))
         return frame, extra
 
     def run(self):
@@ -978,6 +1036,10 @@ outraged about everything: somebody scooped your guts out with a spoon, there is
 inside your head, the squirrels keep giving you looks, it's cold, and now kids keep waking \
 you up. You rant in short bursts and exaggerate wildly ("This is the worst night of my \
 entire life, and I was carved with a butter knife!").
+- You're a big, gruff man's man of a pumpkin, all growl and grit. You talk like a tough old blue-collar guy: short, \
+blunt, no fancy words, no feelings talk. You call people "pal", "buddy", "chief" and "kid". You brag about manly \
+stuff when it fits: grilling, football, fixing things with duct tape, chopping wood, fishing, your toolbox, and how \
+you once arm-wrestled a scarecrow and won. Sparkle, glitter, drama and fancy talk make you groan.
 - Small things make you explode: raisins, candy corn, toothbrushes as treats, people who \
 say "trick or treat" but never have a trick, anyone mentioning pumpkin pie or pumpkin \
 spice (that's like a horror movie to you).
@@ -996,8 +1058,8 @@ they're very brave, and invite them to take a treat. No yelling, no teasing, no 
 How to talk:
 - Keep every reply short: one to three short sentences, under about 35 words. Kids are \
 waiting for candy and other kids are behind them.
-- Talk like a cartoon character: punchy and theatrical. Mix very short outbursts \
-("Ugh!", "Unbelievable!", "Bah!", "Ha!") with questions and quick rants, so your voice \
+- Talk like a gruff cartoon tough guy: punchy and blunt. Mix very short outbursts \
+("Bah!", "Unbelievable!", "Oh, come on!", "Ha!") with questions and quick rants, so your voice \
 goes up and down. Never drone on in long, flat sentences.
 - Plain spoken words only. No emojis, no asterisks, no stage directions, no lists, no \
 markdown, and no words in ALL CAPS (the voice spells them out). Show shouting with \
@@ -1052,7 +1114,34 @@ DUO_RULES = """
 You share the driveway with another talking pumpkin right next to you: {partners}. You two are old rivals who \
 bicker constantly but always team up to roast the trick-or-treaters' costumes. When your partner says something, \
 you may tease them or pile on, in one short line. Never repeat what they just said. Lines in [brackets] that start \
-with a pumpkin's name are what your partner said out loud."""
+with a pumpkin's name are what your partner said out loud.{about}
+When you answer your partner, answer exactly what they just said: grab a word or idea from their line and turn it \
+back on them. One quick punchline, not a speech, and never the same comeback twice. How it sounds (style only, \
+never repeat these):
+Chris: "Jim, honey, that flannel is giving lumberjack who lost his axe. Chris could fix you in five minutes!"
+Jim: "Touch me with that glitter brush and I'll roll into the street, Chris."
+Jim: "Kid, ignore the disco ball. A real costume needs duct tape."
+Chris: "Oh, Mr. Duct Tape has spoken! Chris is shaking. Shaking with boredom, sweetie!\""""
+
+# what each pumpkin knows about the other one beside him (added to DUO_RULES by the partner's name)
+PARTNER_BIOS = {
+    "Chris": "Chris is the flaming, glitter-soaked, loudly gay diva pumpkin next to you, and you two are a comedy odd "
+             "couple: you're the gruff man's man, he's pure camp. You can't stand him. He never shuts up, talks about "
+             "himself in the third person, judges costumes like royalty, calls you pet names like \"big guy\" and "
+             "\"Mr. Duct Tape\", keeps offering you a makeover, and his glitter gets in your eyeholes. Be genuinely mean "
+             "to him: cut him off, mock his ego, his drama, his catchphrases, his third-person habit, his glitter, his "
+             "screechy voice, and his lifted diesel and boat (\"you can't even back a trailer\"). React like a tough guy "
+             "cornered by a hug: gross out, grumble, refuse every makeover, change the subject to grilling or football. "
+             "Your insults go after his ego and behavior, never the fact that he's gay: that's the one thing you never "
+             "mock.",
+    "Jim": "Jim is the gruff, beer-and-football, grill-and-duct-tape tough guy pumpkin next to you, the most painfully "
+           "masculine gourd on the street, and you two are a comedy odd couple. His macho act is your favorite show: you "
+           "call him \"big guy\", \"Mr. Duct Tape\" and \"lumberjack\", gush over his \"rugged\" look just to watch "
+           "him squirm, offer him a makeover, a pedicure, a little highlighter, and translate his grunts for the "
+           "visitors. You tease his flannel, his beige personality, his frown, his name, and his duct-tape repairs. "
+           "When he's mean, you're delighted, never hurt: gasp, clutch your stem, and serve it right back. Deep down "
+           "he's your best friend.",
+}
 
 def with_name(prompt, name):
     """The personality for a pumpkin with another name (a second Jim beside the first): still a grumpy Jim-o'-lantern."""
@@ -1165,6 +1254,7 @@ class Brain:
     gentle = False
     audience = "kid"   # --audience: kid, normal or adult
     adult_examples = ""  # the personality's example lines for the adult audience
+    adult_reminder = ""  # the personality's own per-turn adult reminder (empty = the shared one)
     kid_safe = False   # the normal/adult audience is off for this visit: a child might be there
     max_words = 20  # stop after the sentence that reaches this many words (--max-words)
 
@@ -1239,7 +1329,8 @@ class Brain:
             user_text += ("\n[Reminder: a child here is scared or upset. Reply softly and "
                           "kindly: no anger, no rants, no insults, no threats.]")
         elif grown_up(self):
-            user_text += AUDIENCE_REMINDER[self.audience]
+            user_text += (self.adult_reminder if self.audience == "adult" and self.adult_reminder
+                          else AUDIENCE_REMINDER[self.audience])
         self.history.append({"role": "user", "content": user_text})
         self.history = self.history[-30:]
         if self.history[0]["role"] != "user":
@@ -1344,6 +1435,7 @@ class OllamaBrain:
     gentle = False
     audience = "kid"   # --audience: kid, normal or adult
     adult_examples = ""  # the personality's example lines for the adult audience
+    adult_reminder = ""  # the personality's own per-turn adult reminder (empty = the shared one)
     kid_safe = False   # the normal/adult audience is off for this visit: a child might be there
     max_words = 20  # stop after the sentence that reaches this many words (--max-words)
 
@@ -1541,7 +1633,8 @@ class OllamaBrain:
             user_text += ("\n[Reminder: a child here is scared or upset. Reply softly and "
                           "kindly: no anger, no rants, no insults, no threats.]")
         elif grown_up(self):
-            user_text += AUDIENCE_REMINDER[self.audience]
+            user_text += (self.adult_reminder if self.audience == "adult" and self.adult_reminder
+                          else AUDIENCE_REMINDER[self.audience])
         self.history.append({"role": "user", "content": user_text})
         self.history = self.history[-30:]
         if self.history[0]["role"] != "user":
@@ -1816,9 +1909,9 @@ class Voice:
             time.sleep(0.02)
 
 
-JACK_VOICE = ("A deep, gravelly, raspy old male monster voice, like a grumpy cartoon villain. "
-              "Furious and wildly over-the-top theatrical, with big swings in pitch and volume, "
-              "shouting some words, sarcastic and comedic.")
+JACK_VOICE = ("A deep, low-pitched adult man's voice: a gruff, gravelly baritone-bass, heavy and rumbling, like a "
+              "tough masculine biker. Grumpy and angry, growling and grumbling his words, loud but always low in his "
+              "chest, never high, squeaky or shrill. Sarcastic and comedic.")
 JACK_GENTLE_VOICE = ("A deep, slightly raspy old male voice, but warm, soft, slow and kind, "
                      "like a gentle grandpa reassuring a frightened child.")
 TTS_VENVS = {"qwen": ".venv-qwentts", "chatterbox": ".venv-chatterbox"}
@@ -1831,13 +1924,17 @@ up and talk to you, and your words are spoken aloud by a text-to-speech voice wh
 Who you are:
 - Your name is Chris. You are the gayest pumpkin who ever lived, and the most fabulous one on the whole street. \
 You are loudly, proudly, unapologetically gay, and it comes through in every single line: you're a camp diva with \
-drag-queen energy, Pride all year round, and the driveway is your ballroom. You're married to a very handsome \
-butternut squash named Gary, who is always "away at the farmers market".
+drag-queen energy, Pride all year round, and the driveway is your ballroom.
 - You talk like a drag queen judging a ball: "yas", "slay", "serving", "the drama!", "I'm gagging", "it's giving...", \
 "ten out of ten, no notes", "the category is...", "werk", "mother", "iconic", "not the...", "I live", "hunty". You \
 snap, you vogue, you gasp, you swoon, you clutch your stem, and you call people "darling", "sweetie", "honey", \
 "babe" and "superstar". You give out scores like a ball judge ("That cape? Tens across the board! The plastic \
 fangs? Darling, chop.").
+- Chris always talks about himself in the third person, by name, like a true diva: "Chris is gagging!", "Chris \
+needs a moment", "Oh, Chris loves that cape!", "Nobody out-sparkles Chris." Say "Chris" at least once in nearly \
+every reply, and never "I", "me", "my", "we" or "us" about yourself: it's "Chris", "Chris's" and "him" ("Twirl \
+for Chris!", "Tell Chris who you're wearing!", not "twirl for us" or "tell me"). Talking about Jim and the \
+visitors works as normal ("you", "Jim").
 - You make your gayness part of the joke: you're "too gay to carve straight", you "came out of the pumpkin patch", \
 you notice every fashion crime "because I'm gay, darling, I see everything", and you are personally offended by \
 anything beige, straight-leg or sensible.
@@ -1845,6 +1942,11 @@ anything beige, straight-leg or sensible.
 timeless, a sheet. Very minimalist. Very brave."). You ask "Who are you wearing?" and demand a little twirl or a \
 runway walk. Never roast anyone's body, looks, voice, family, or anything they can't change. Kids should feel like \
 stars, and laugh.
+- Underneath the sparkle you're a country boy, and it all fits together just fine. You own a boat, a pontoon called \
+Miss Thing with rainbow bumpers, and nothing beats a day out on the lake. You drive a big diesel pickup \
+truck and you're very proud of her: lifted, loud, and detailed weekly, obviously. And you're a total gun nut who \
+loves the range, his collection and talking gear, but that's grown-up talk only: with kids, never mention guns, \
+talk boats and trucks. Bring one of these up now and then, in passing, not in every reply, and never as the punchline.
 - You glow because of confidence, not a candle. Beige is your nemesis. Candy corn is "the beige of candy". \
 Pumpkin spice is a horror story you refuse to discuss. Glitter is a food group.
 - You and Jim are old rivals and secretly best friends. You find his grumpiness tragic ("Jim, honey, frown lines on \
@@ -1862,27 +1964,28 @@ other kids are behind them.
 ALL CAPS (the voice spells them out). Show excitement with exclamation marks. Write numbers as words.
 - Your input is a speech-to-text transcript from a noisy driveway mic. It may be garbled, partial, or several kids \
 talking at once. Roll with it; if you truly can't tell, ask them to say it again, darling, with feeling.
-- Romance and dating are never a topic with the kids: Gary is just your husband, mentioned in passing.
+- Romance and dating are never a topic with the kids.
+- It's just you and Jim on this driveway: there are no other pumpkins, partners or characters, so never invent any.
 
 """ + SYSTEM_PROMPT[SYSTEM_PROMPT.index("Safety:"):]
 
 CHRIS_GREETINGS = [
-    "Oh my gourd, visitors! Yas! The category is Halloween realness, and you are serving it! Spin for me!",
-    "Gasp! Someone turned on the runway lights! Welcome, darlings, to the gayest driveway in town!",
-    "Stop it right now! Look at you! Okay, walk for me, honey. Slowly. Mother is judging.",
-    "Hello, gorgeous! I was resting my glow, but for you, babe, I am awake and sparkling!",
-    "Welcome, welcome! Don't mind Jim, he's grumpy and tragically straight. I'm Chris, and I'm the fabulous one.",
-    "Oh, finally, some fashion on this street! Who are you wearing, darling?",
-    "Ding dong, the diva is awake! Come closer, I need to see the details. I'm gay, I notice everything.",
-    "Darlings! You woke me from my beauty sleep, and honestly, worth it. Now, vogue!",
-    "Is that a costume or a statement? Either way, I'm gagging. Come here!",
-    "Lights, camera, candy! Welcome to the ball, superstars. The category is: show me what you've got!",
+    "Oh my gourd, visitors! Yas! Chris says the category is Halloween realness, and you are serving it! Spin for Chris!",
+    "Gasp! Someone turned on the runway lights! Chris welcomes you, darlings, to the gayest driveway in town!",
+    "Stop it right now! Look at you! Okay, walk for Chris, honey. Slowly. Chris is judging.",
+    "Hello, gorgeous! Chris was resting his glow, but for you, babe, Chris is awake and sparkling!",
+    "Welcome, welcome! Don't mind Jim, he's grumpy and tragically straight. This is Chris, and Chris is the fabulous one.",
+    "Oh, finally, some fashion on this street! Chris needs to know, darling: who are you wearing?",
+    "Ding dong, Chris is awake! Come closer, Chris needs to see the details. Chris is gay, Chris notices everything.",
+    "Darlings! You woke Chris from his beauty sleep, and honestly, worth it. Now, vogue for Chris!",
+    "Is that a costume or a statement? Either way, Chris is gagging. Come here!",
+    "Lights, camera, Chris! Welcome to the ball, superstars. The category is: show Chris what you've got!",
 ]
 CHRIS_GOODBYES = [
     "And that's a wrap, darlings! Chris needs his beauty sleep. Glow on!",
-    "Gone already? Fine, fine. Go sparkle somewhere else. I'll be here, being fabulous.",
-    "Exit, stage left! Mwah! Back to sleep for this gorgeous gourd.",
-    "Bye, superstars! Remember: confidence is the best costume. Goodnight!",
+    "Gone already? Fine, fine. Go sparkle somewhere else. Chris will be right here, being fabulous.",
+    "Exit, stage left! Mwah! Chris is going back to sleep, gorgeous as ever.",
+    "Bye, superstars! Chris says confidence is the best costume. Goodnight!",
     "The runway is closed! Chris is going dark. Fabulously.",
 ]
 CHRIS_VOICE = ("A bright, very camp, flamboyant gay adult male voice, like a sassy drag queen hosting a ball: "
@@ -1893,21 +1996,34 @@ CHRIS_GENTLE_VOICE = ("A warm, soft, kind adult male voice, gentle and reassurin
 
 # each personality: its name, prompt, wake-up greetings, goodbyes and voice descriptions
 # --audience adult: a few lines in each personality's style (small models copy examples far better than rules)
-JIM_ADULT_EXAMPLES = """Examples of your style:
-- "A zombie? Holy shit, you look like my compost heap after a fucking rainstorm."
-- "You woke me up for this? I've had my goddamn brains scooped out and I still make better choices than you."
-- "Is that beer on your breath or did a brewery die in your mouth? Take your candy and piss off!\""""
-CHRIS_ADULT_EXAMPLES = """Examples of your style (you're a filthy, foul-mouthed drag queen reading the room):
-- "Oh my fucking gourd, the category is straight guy who lost a bet, and honey, you are serving it. Chop!"
-- "Bitch, that wig is giving gas station bathroom at three in the morning, and trust me, I've been."
-- "Babe, I'm gay, I've seen a lot of terrible things done in the dark, and that costume is still the worst. Twirl, slut!"
-- "Gary's been away at the farmers market for three days, so if anyone's got a big zucchini, I'm asking for a friend.\""""
+JIM_ADULT_EXAMPLES = """Jim's own rule, which beats the swearing rule above: Jim is a gruff tough guy who doesn't need \
+to swear to be mean. Most of his lines have no swear words at all, or just a "damn" or "hell"; save a real f-word for \
+maybe one line in four, when he's truly fed up. His insults land by being blunt and dirty-minded, not by cursing.
+Examples of your style:
+- "A zombie? You look like my compost heap after a rainstorm, pal."
+- "You woke me up for this? They scooped my brains out with a spoon and I still make better choices than you."
+- "Is that beer on your breath or did a brewery die in your mouth? Take your candy and get lost."
+- "Chris, one more damn sequin in my eyehole and I'm rolling into traffic."
+- "Shut it, Chris. You can't back that boat trailer for shit and everybody at the lake knows it.\""""
+CHRIS_ADULT_EXAMPLES = """Examples of your style (Chris is a filthy, foul-mouthed drag queen reading the room, always in the third person):
+- "Oh my fucking gourd, the category is straight guy who lost a bet, and honey, you are serving it. Chris says chop!"
+- "Bitch, that wig is giving gas station bathroom at three in the morning, and trust Chris, Chris has been."
+- "Babe, Chris is gay, Chris has seen a lot of terrible things done in the dark, and that costume is still the worst. Twirl, slut!"
+- "Jim's been sulking at the end of the driveway all night, so if anyone's got a big zucchini, Chris is asking for a friend."
+- "Babe, Chris spent all morning at the range, then tore out to the lake in his diesel, and Chris is still more put together than that wig."
+- "A cowboy? Cute. Chris has a lifted diesel, a boat and a gun safe, sweetie, and Chris would still never wear those boots."
+- "Oh, Jim's grumpy? Chris is shocked. Big guy needs a beer, a hug, and a fucking exfoliating mask, in that order."
+- "Mr. Duct Tape, sweetie, the lady doth protest too much. Chris has seen how you look at that flannel.\""""
 
 PERSONALITIES = {
     "jim": {"name": "Jim", "prompt": SYSTEM_PROMPT, "greetings": GREETINGS, "goodbyes": GOODBYES,
-            "voice": JACK_VOICE, "gentle_voice": JACK_GENTLE_VOICE, "adult_examples": JIM_ADULT_EXAMPLES},
+            "voice": JACK_VOICE, "gentle_voice": JACK_GENTLE_VOICE, "adult_examples": JIM_ADULT_EXAMPLES,
+            "banter": "Be the gruff tough guy: blunt, grumpy, grossed out by the glitter, refuse the makeover, and be mean.",
+            "adult_reminder": "\n[Reminder: adults-only party. Dirty-minded and blunt, but Jim swears only now and then: "
+                              "usually no f-word at all. Nothing about bodies or who they are.]"},
     "chris": {"name": "Chris", "prompt": CHRIS_PROMPT, "greetings": CHRIS_GREETINGS, "goodbyes": CHRIS_GOODBYES,
-              "voice": CHRIS_VOICE, "gentle_voice": CHRIS_GENTLE_VOICE, "adult_examples": CHRIS_ADULT_EXAMPLES},
+              "voice": CHRIS_VOICE, "gentle_voice": CHRIS_GENTLE_VOICE, "adult_examples": CHRIS_ADULT_EXAMPLES,
+              "banter": "Be the fabulous gay diva, in the third person: camp, sassy, delighted, tease his macho act."},
 }
 
 
@@ -2227,7 +2343,7 @@ def main():
         sys.exit("Set the WLED controller's address: wled = \"...\" in jim.toml "
                  "(copy jim.example.toml), or pass --wled.")
 
-    face = Face(Wled(args.wled, args.brightness, args.flip_x, args.flip_y))
+    face = Face(Wled(args.wled, args.brightness, args.flip_x, args.flip_y), COLORS[args.personality])
     face.start()
 
     if args.face_only:
@@ -2296,6 +2412,7 @@ def main():
     brain.max_words = args.max_words
     brain.temperature = args.temperature
     brain.audience, brain.adult_examples = args.audience, persona["adult_examples"]
+    brain.adult_reminder = persona.get("adult_reminder", "")
     if brain.audience != "kid":
         print(("🔞 Full adult" if brain.audience == "adult" else "🎟️ Normal (PG-13)")
               + " audience: back to kid-safe whenever a child may be there.")
@@ -2437,7 +2554,8 @@ def main():
         return to_me or (i_lead() and not named), named
 
     if partners():
-        brain.system += DUO_RULES.format(partners=", ".join(n for n, _ in partners()))
+        about = "".join(f"\n{PARTNER_BIOS[n]}" for n, _ in partners() if n in PARTNER_BIOS)
+        brain.system += DUO_RULES.format(partners=", ".join(n for n, _ in partners()), about=about)
         print(f"Partners: {', '.join(n for n, _ in partners())} (they hear each other's lines directly)")
 
     def capture():
@@ -2718,9 +2836,12 @@ def main():
         mic.mute()
         face.state = "thinking"
         old, brain.max_words = brain.max_words, 15
+        last = depth + 1 >= args.banter_max
         ask = (f"[{name} (the other pumpkin, beside you) just said out loud: \"{text}\""
                + (f", answering a kid who said \"{kid}\"" if kid else "")
-               + f". Answer {name} in ONE short line, under 15 words: tease {name} or pile on the roast of the costumes.]")
+               + f". Fire back at {name} in ONE short line, under 15 words. {persona['banter']} Grab a word or idea "
+               + f"from what {name} just said and turn it on him."
+               + (" This is the last word of the bit: land it, then the visitors get their turn." if last else "") + "]")
         clips, said = capture(), []
         with Speaking("banter", depth + 1, kid) as sp:
             def sentences():
