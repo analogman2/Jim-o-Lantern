@@ -182,6 +182,22 @@ def jims_camera(i=None):
     return ("usb", c.get("device")) if c.get("kind") == "usb" else ("rtsp", load_config(i)["camera_id"])
 
 
+_previews = {}                 # USB webcam device -> the preview ffmpeg processes reading it right now
+_previews_lock = threading.Lock()
+
+
+def release_webcam(dev):
+    """Stop the panel's own previews of this USB webcam so a starting Jim can open it (only one program can).
+    Open previews then carry on with his frames."""
+    with _previews_lock:
+        procs = list(_previews.get(dev, ()))
+    for proc in procs:
+        proc.kill()
+    for proc in procs:
+        proc.wait()
+    return len(procs)
+
+
 def webcam_holder(dev):
     """The viewer of a running Jim who has this USB webcam open (only one program can), to borrow his frames."""
     for i in instances():
@@ -655,6 +671,10 @@ class Jim:
                 raise ValueError(f"another copy of Jim is running (pid {', '.join(map(str, self.others()))}): stop it first")
             self.log.clear()
             self.log.append(f"--- starting {self.inst['name']} at {time.strftime('%H:%M:%S')}")
+            cfg = J.load()
+            cam = cfg["cameras"].get(cfg["jims"].get(self.inst["id"], {}).get("camera_id") or "")
+            if cam and cam.get("kind") == "usb" and release_webcam(cam.get("device")):
+                self.log.append("(stopped the panel's camera preview so he can use the webcam)")
             self.proc = subprocess.Popen([str(PYTHON), "-u", "pumpkin.py", "--config", str(J.CONFIG), "--name", self.inst["name"],
                                           "--jim-id", self.inst["id"],
                                           "--watch-port", str(self.inst["watch_port"])], cwd=HERE,
@@ -900,19 +920,26 @@ class Panel(applog.RequestLog, BaseHTTPRequestHandler):
         opened by one program: while Jim is using it, this shows his frames instead."""
         borrow = webcam_holder(usb) if source == "usb" else None
 
+        def borrowed(url):
+            while True:
+                try:
+                    with urllib.request.urlopen(url + "/live.jpg", timeout=3) as r:
+                        yield r.read()
+                except Exception:
+                    return
+                time.sleep(0.2)
+
         def frames():
             if borrow:
-                while True:
-                    try:
-                        with urllib.request.urlopen(borrow + "/live.jpg", timeout=3) as r:
-                            yield r.read()
-                    except Exception:
-                        return
-                    time.sleep(0.2)
+                yield from borrowed(borrow)
+                return
             cmd = stream_cmd(source, usb, url)
             if not cmd:
                 return
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            if source == "usb":
+                with _previews_lock:
+                    _previews.setdefault(usb, set()).add(proc)
             try:
                 buf = b""
                 while chunk := proc.stdout.read(65536):
@@ -921,7 +948,18 @@ class Panel(applog.RequestLog, BaseHTTPRequestHandler):
                         yield buf[start:end + 2]
                         buf = buf[end + 2:]
             finally:
+                if source == "usb":
+                    with _previews_lock:
+                        _previews.get(usb, set()).discard(proc)
                 proc.kill(); proc.wait()
+            if source == "usb":                        # a Jim took the webcam (release_webcam): show his frames
+                for _ in range(40):                     # his viewer comes up a few seconds after he starts
+                    holder = webcam_holder(usb)
+                    if holder:
+                        time.sleep(3)
+                        yield from borrowed(holder)
+                        return
+                    time.sleep(0.5)
 
         gen, t0 = frames(), time.time()
         first = next(gen, None)
