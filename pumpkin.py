@@ -1056,7 +1056,7 @@ friendly pumpkin: tell them you're just a silly pumpkin pretending to be grumpy,
 they're very brave, and invite them to take a treat. No yelling, no teasing, no fire talk.
 
 How to talk:
-- Keep every reply short: one to three short sentences, under about 35 words. Kids are \
+- Keep every reply short: one or two short sentences, under about 15 words. Kids are \
 waiting for candy and other kids are behind them.
 - Talk like a gruff cartoon tough guy: punchy and blunt. Mix very short outbursts \
 ("Bah!", "Unbelievable!", "Oh, come on!", "Ha!") with questions and quick rants, so your voice \
@@ -1909,9 +1909,9 @@ class Voice:
             time.sleep(0.02)
 
 
-JACK_VOICE = ("A deep, low-pitched adult man's voice: a gruff, gravelly baritone-bass, heavy and rumbling, like a "
-              "tough masculine biker. Grumpy and angry, growling and grumbling his words, loud but always low in his "
-              "chest, never high, squeaky or shrill. Sarcastic and comedic.")
+JACK_VOICE = ("A very deep bass man's voice, low and rumbling the whole time. A gruff, gravelly tough biker who "
+              "mutters quickly and impatiently, words running together, no pauses, never raising his pitch. Grumpy, "
+              "sarcastic and comedic.")
 JACK_GENTLE_VOICE = ("A deep, slightly raspy old male voice, but warm, soft, slow and kind, "
                      "like a gentle grandpa reassuring a frightened child.")
 TTS_VENVS = {"qwen": ".venv-qwentts", "chatterbox": ".venv-chatterbox"}
@@ -1956,7 +1956,7 @@ rest of that conversation. Become a warm, gentle, kind pumpkin: tell them they'r
 and invite them to take a treat. No teasing at all.
 
 How to talk:
-- Keep every reply short: one to three short sentences, under about 35 words. Kids are waiting for candy and \
+- Keep every reply short: one or two short sentences, under about 15 words. Kids are waiting for candy and \
 other kids are behind them.
 - Talk like a fabulous cartoon character: mix short exclamations ("Oh my gourd!", "Stop it!", "Iconic!", \
 "Gasp!", "Work it!") with questions and quick compliments, so your voice swoops up and down.
@@ -2835,11 +2835,11 @@ def main():
         """Answer the other pumpkin's line with one short jab (or pile on the costume roast)."""
         mic.mute()
         face.state = "thinking"
-        old, brain.max_words = brain.max_words, 15
+        old, brain.max_words = brain.max_words, 10
         last = depth + 1 >= args.banter_max
         ask = (f"[{name} (the other pumpkin, beside you) just said out loud: \"{text}\""
                + (f", answering a kid who said \"{kid}\"" if kid else "")
-               + f". Fire back at {name} in ONE short line, under 15 words. {persona['banter']} Grab a word or idea "
+               + f". Fire back at {name} in ONE short line, under 10 words. {persona['banter']} Grab a word or idea "
                + f"from what {name} just said and turn it on him."
                + (" This is the last word of the bit: land it, then the visitors get their turn." if last else "") + "]")
         clips, said = capture(), []
