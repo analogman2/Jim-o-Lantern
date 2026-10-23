@@ -17,6 +17,7 @@ firmware/*.wav
 # Scratch audio; only the demo clip is kept
 samples/*.wav
 !samples/jim_demo.wav
+!samples/chris_demo.wav
 
 # CAD environment
 .venv-cad/
@@ -26,3 +27,10 @@ cache/
 
 # This machine's settings (copy jim.example.toml)
 jim.toml
+
+# Recorded visits (kids' voices and camera frames): never committed
+recordings/
+
+# Extra Jims: settings set aside when removed, and their recordings
+jims/*.removed
+recordings-*/

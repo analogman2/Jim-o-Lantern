@@ -1,0 +1,1052 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Jim's control panel</title>
+<meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<style>
+/* Apple-style: system font, light/dark from the device, soft cards, frosted header, segmented tabs, pill buttons */
+:root{--bg:#f5f5f7;--card:#ffffff;--card2:#f5f5f7;--ink:#1d1d1f;--mute:#6e6e73;--line:rgba(0,0,0,.08);--fill:rgba(120,120,128,.12);--fill2:rgba(120,120,128,.2);
+ --accent:#0071e3;--orange:#ff9500;--ok:#34c759;--bad:#ff3b30;--yellow:#ffcc00;--blue:#007aff;--purple:#af52de;--chip:var(--fill);
+ --shadow:0 1px 2px rgba(0,0,0,.04),0 6px 20px rgba(0,0,0,.06);--bar:rgba(255,255,255,.72);--media:#e8e8ed;--track:#e5e5ea;--code:#f5f5f7;--codeink:#1d1d1f;
+ --r:18px;--r2:12px;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#000;--card:#1c1c1e;--card2:#2c2c2e;--ink:#f5f5f7;--mute:#98989d;--line:rgba(255,255,255,.1);--fill:rgba(118,118,128,.24);--fill2:rgba(118,118,128,.36);
+ --accent:#0a84ff;--orange:#ff9f0a;--ok:#30d158;--bad:#ff453a;--yellow:#ffd60a;--blue:#0a84ff;--purple:#bf5af2;--shadow:0 0 0 1px rgba(255,255,255,.06);--bar:rgba(22,22,24,.72);--media:#000;--track:#3a3a3c;--code:#000;--codeink:#d1d1d6;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.47 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased;letter-spacing:-.01em}
+header{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 20px;background:var(--bar);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+header h1{font-size:22px;margin:0 4px 0 0;line-height:1}
+.jims{display:flex;gap:6px;flex-wrap:wrap}
+.jimpill{display:flex;align-items:center;gap:7px;border:0;background:var(--fill);color:var(--ink);border-radius:99px;padding:6px 14px;cursor:pointer;font:inherit;font-size:14px;transition:background .2s}
+.jimpill:hover{background:var(--fill2)}.jimpill.on{background:var(--ink);color:var(--bg);font-weight:600}.jimpill .st{font-size:12px;opacity:.65;font-weight:400}
+.dotj{width:8px;height:8px;border-radius:50%;background:var(--mute)}.dotj.run{background:var(--ok)}.dotj.awake{background:var(--orange)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.35);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:20;padding:16px}
+.modal .card{width:100%;max-width:440px;margin:0;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.pill{border-radius:99px;padding:4px 12px;font-size:13px;font-weight:600;background:var(--fill);color:var(--mute)}
+.pill.on{background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}.pill.warn{background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad)}
+nav{display:flex;gap:2px;overflow-x:auto;margin:16px auto 0;padding:3px;width:max-content;max-width:calc(100% - 32px);background:var(--fill);border-radius:12px;scrollbar-width:none}
+nav::-webkit-scrollbar{display:none}
+nav button{border:0;background:none;color:var(--ink);font:inherit;font-size:14px;font-weight:500;padding:6px 16px;border-radius:9px;cursor:pointer;white-space:nowrap;transition:background .2s,box-shadow .2s}
+nav button.on{background:var(--card);box-shadow:0 1px 3px rgba(0,0,0,.12),0 0 0 .5px rgba(0,0,0,.04);font-weight:600}
+@media (prefers-color-scheme:dark){nav button.on{background:#636366}}
+main{max-width:1100px;margin:0 auto;padding:20px 20px 40px}main:has(#tab-live.on){max-width:1700px}
+.tab{display:none}.tab.on{display:block}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px}
+.card{background:var(--card);border:0;border-radius:var(--r);padding:20px 22px;margin-bottom:20px;min-width:0;box-shadow:var(--shadow)}
+.card h2{font-size:19px;font-weight:600;letter-spacing:-.02em;margin:0 0 14px;color:var(--ink)}
+input[type=range]{width:100%;accent-color:var(--accent);margin:6px 0 0}
+.sl{display:flex;align-items:center;gap:12px}.sl input{flex:1}.sl .val{min-width:96px;text-align:right;font-variant-numeric:tabular-nums;color:var(--mute);font-size:13px}.sl .val b{color:var(--ink);font-size:16px;font-weight:600}
+.cams{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:16px;margin-bottom:20px}
+.camcard{background:var(--card);border:0;border-radius:var(--r);padding:12px;display:flex;flex-direction:column;gap:10px;min-width:0;box-shadow:var(--shadow);transition:box-shadow .2s}
+.camcard.active{box-shadow:0 0 0 2px var(--accent),var(--shadow)}.camcard .thumb{position:relative;aspect-ratio:16/9;background:var(--media);border-radius:var(--r2);overflow:hidden}
+.camcard .thumb img{width:100%;height:100%;object-fit:cover;display:block}.camcard .thumb img:not([src]){visibility:hidden}
+.camcard .thumb .snapnote{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:13px;text-align:center;padding:8px;color:var(--mute)}
+.badge{display:inline-block;margin-left:8px;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent)}
+.sub{font-size:13px;color:var(--mute)}h2.sect{font-size:22px;font-weight:700;letter-spacing:-.02em;margin:10px 0 14px;color:var(--ink)}
+.bars{display:flex;align-items:flex-end;gap:2px;height:50px;margin-top:8px}.bars i{flex:1;background:var(--ok);min-height:1px;border-radius:2px 2px 0 0}
+.thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}
+.vcard{background:var(--card);border:0;border-radius:var(--r);overflow:hidden;cursor:pointer;box-shadow:var(--shadow);transition:transform .2s,box-shadow .2s}
+.vcard:hover{transform:translateY(-2px);box-shadow:0 10px 30px rgba(0,0,0,.12)}
+.vcard img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block;background:var(--media)}.vcard .vb{padding:10px 14px 14px}
+.vcard .when{font-weight:600}.vcard .seen{font-size:13px;color:var(--mute);margin-top:3px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+button.b{font:inherit;font-size:14px;font-weight:500;border:0;background:var(--fill);color:var(--accent);border-radius:99px;padding:7px 16px;cursor:pointer;transition:background .15s,transform .1s}
+button.b:hover{background:var(--fill2)}button.b:active{transform:scale(.97)}
+button.b.go{background:var(--accent);color:#fff;font-weight:600}button.b.go:hover{background:color-mix(in srgb,var(--accent) 88%,#000)}
+button.b:disabled{opacity:.4;cursor:default;transform:none}button.b.sm{padding:5px 12px;font-size:13px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+img.view{width:100%;border-radius:var(--r2);background:var(--media);display:block;aspect-ratio:16/9;object-fit:cover}
+img.view:not([src]){visibility:hidden}
+.field{margin-bottom:18px}.field label{display:block;font-weight:600;font-size:14px;margin-bottom:6px}.field label::first-letter{text-transform:uppercase}
+.field .help{color:var(--mute);font-size:13px;margin-top:5px}
+input[type=text],input[type=number],input[type=password],select,textarea{width:100%;font:inherit;color:var(--ink);background:var(--fill);border:0;border-radius:10px;padding:9px 12px;outline:none;transition:box-shadow .15s}
+input:focus,select:focus,textarea:focus{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 40%,transparent)}
+select{appearance:none;-webkit-appearance:none;padding-right:32px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238e8e93' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
+textarea{min-height:84px;resize:vertical}
+input[type=checkbox]{appearance:none;-webkit-appearance:none;width:44px;height:26px;border-radius:99px;background:var(--fill2);position:relative;vertical-align:middle;margin:0 8px 0 0;cursor:pointer;transition:background .2s;flex:none}
+input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.2);transition:transform .2s}
+input[type=checkbox]:checked{background:var(--ok)}input[type=checkbox]:checked::after{transform:translateX(18px)}
+.changed input,.changed select,.changed textarea{box-shadow:0 0 0 2px var(--accent)}
+.meter{height:8px;background:var(--fill);border-radius:99px;position:relative;overflow:hidden}
+.meter i{position:absolute;inset:0 auto 0 0;background:var(--ok);border-radius:99px;transition:width .15s}.meter b{position:absolute;top:0;bottom:0;width:2px;background:var(--bad)}
+.verdict{font-weight:600;margin-top:8px}.yes{color:var(--ok)}.no{color:var(--mute)}.err{color:var(--bad)}
+ul.log{list-style:none;padding:0;margin:0;max-height:340px;overflow:auto}ul.log li{padding:8px 0;border-top:1px solid var(--line);font-size:14px}ul.log li:first-child{border-top:0}
+.t{color:var(--mute);font-size:12px;margin-right:6px;font-variant-numeric:tabular-nums}
+pre.console{margin:0;max-height:300px;overflow:auto;font:12px/1.5 ui-monospace,"SF Mono",Menlo,monospace;white-space:pre-wrap;background:var(--code);color:var(--codeink);border-radius:var(--r2);padding:10px 12px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--bar);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);color:var(--ink);border:0;box-shadow:0 10px 40px rgba(0,0,0,.2),0 0 0 .5px var(--line);padding:12px 18px;border-radius:16px;display:none;gap:10px;align-items:center;z-index:30;max-width:calc(100% - 32px);font-weight:500}
+.visit{display:flex;gap:12px;align-items:center;padding:8px;border-radius:var(--r2);cursor:pointer;transition:background .15s}.visit:hover{background:var(--fill)}
+.visit img{width:96px;aspect-ratio:16/9;object-fit:cover;border-radius:8px;background:var(--media);flex:none}
+.entry{display:grid;grid-template-columns:minmax(0,220px) 1fr;gap:14px;padding:12px 0;border-top:1px solid var(--line)}
+.entry img{width:100%;border-radius:10px}.entry audio{width:100%;height:36px;margin-top:4px}
+.kind{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--accent)}
+.muted{color:var(--mute)}
+/* Live dashboard: same tokens */
+.dash{--g-bg:transparent;--g-panel:var(--card);--g-line:var(--line);--g-text:var(--ink);--g-mute:var(--mute);--g-green:var(--ok);--g-yellow:var(--yellow);--g-red:var(--bad);--g-blue:var(--blue);--g-orange:var(--orange);--g-purple:var(--purple);
+ background:transparent;color:var(--g-text);padding:0;margin-bottom:20px}
+.dhead{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;padding:0 2px 14px;font-weight:700;font-size:22px;letter-spacing:-.02em}.dash .sub{color:var(--g-mute);font-weight:400;font-size:13px;letter-spacing:0}
+.dgrid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));grid-auto-rows:20px;gap:12px}
+.dp{background:var(--g-panel);border:0;border-radius:var(--r);padding:12px 16px 14px;position:relative;overflow:hidden;min-width:0;display:flex;flex-direction:column;box-shadow:var(--shadow)}
+.dp.dragging{opacity:.9;box-shadow:0 0 0 2px var(--accent),0 20px 50px rgba(0,0,0,.2);z-index:4}.dp.resizing{box-shadow:0 0 0 2px var(--accent),var(--shadow)}
+.dt{font-size:13px;font-weight:600;color:var(--g-mute);margin:0 -16px 6px;padding:0 16px 2px;cursor:grab;display:flex;align-items:center;gap:6px;user-select:none;position:relative;z-index:2}
+@keyframes flash{0%,60%{box-shadow:0 0 0 3px var(--accent)}100%{box-shadow:0 0 0 3px transparent}}.dp.flash{animation:flash 1.6s ease-out}
+.dt .x{margin-left:auto;border:0;background:var(--fill);color:var(--g-mute);width:20px;height:20px;font-size:14px;line-height:20px;padding:0;cursor:pointer;border-radius:50%;visibility:hidden}
+.dp:hover .dt .x{visibility:visible}.dt .x:hover{color:var(--g-text);background:var(--fill2)}
+.dsel{width:auto;max-width:60%;min-width:0;font-size:12px;padding:3px 26px 3px 10px;background-color:var(--fill);background-position:right 9px center;border:0;border-radius:99px;color:var(--g-text);cursor:pointer;font-weight:500}
+.rs{position:absolute;right:4px;bottom:4px;width:14px;height:14px;cursor:nwse-resize;z-index:3;opacity:0;transition:opacity .2s;background:linear-gradient(135deg,transparent 55%,var(--mute) 55%,var(--mute) 63%,transparent 63%,transparent 75%,var(--mute) 75%,var(--mute) 83%,transparent 83%)}
+.dp:hover .rs{opacity:.6}
+.dtools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.dtools select,.dbtn{background-color:var(--fill);color:var(--accent);border:0;border-radius:99px;font:inherit;font-size:13px;font-weight:500;padding:6px 14px;width:auto;cursor:pointer;letter-spacing:0}
+.dtools select{padding-right:30px;color:var(--ink)}
+.dbtn.save:not(:disabled){background:var(--accent);color:#fff}.dbtn:disabled{opacity:.45;cursor:default}
+.scroll{overflow:auto;flex:1;min-height:0}
+.dash .media{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px}.dash img.view{flex:1;min-height:0;aspect-ratio:auto;object-fit:contain;background:var(--media);border-radius:var(--r2)}
+.dash .meter{background:var(--fill)}
+.vmeter{flex:1;min-height:0;display:flex;gap:10px;padding:4px 0 2px}.vscale{position:relative;width:24px;font-size:10px;color:var(--g-mute)}
+.vscale span{position:absolute;right:0;transform:translateY(50%)}
+.vbar{position:relative;width:22px;border-radius:99px;background:linear-gradient(to top,var(--ok) 0%,var(--ok) 55%,var(--yellow) 78%,var(--bad) 100%);overflow:visible;cursor:ns-resize;touch-action:none}
+.vbar i{position:absolute;left:0;right:0;top:0;height:100%;background:var(--track);border-radius:99px 99px 0 0;transition:height .12s linear}
+.vbar b{position:absolute;left:-5px;right:-5px;height:4px;border-radius:2px;background:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.3);cursor:ns-resize}
+.vbar b::before{content:"";position:absolute;left:-6px;right:-6px;top:-8px;bottom:-8px}
+.vbar b span{position:absolute;left:calc(100% + 8px);top:50%;transform:translateY(-50%);white-space:nowrap;font-size:11px;font-weight:600;color:#fff;background:var(--accent);border-radius:99px;padding:2px 8px;display:none}
+.vbar.dragging b span,.vbar:hover b span{display:block}
+.vbar.muted{filter:grayscale(1) opacity(.5)}
+.vread{display:flex;flex-direction:column;justify-content:flex-end;min-width:0}.vread .dv{font-size:30px}.dash ul.log{max-height:none}.dash ul.log li{border-top-color:var(--line);color:var(--g-text)}
+.dash pre.console{max-height:none;margin:0}.dash .verdict{margin:0}.dash .yes{color:var(--g-green)}.dash .no{color:var(--g-mute)}.dash .err{color:var(--g-red)}
+@media (max-width:700px){.dgrid{display:flex;flex-direction:column}.dp{min-height:120px}.dp[data-h="360"]{height:340px}.dp[data-h="270"],.dp[data-h="320"]{height:280px}.rs{display:none}.dt{cursor:default}
+ header{padding:10px 16px}main{padding:16px 16px 32px}.card{padding:16px 18px}nav{margin-top:12px}}
+.dv{font-size:36px;font-weight:600;letter-spacing:-.03em;line-height:1.1;font-variant-numeric:tabular-nums;position:relative;z-index:1;color:var(--g-mute)}
+.ds{font-size:12px;color:var(--g-mute);position:relative;z-index:1}
+svg.dsp{position:absolute;left:0;right:0;bottom:0;width:100%;height:46%;opacity:.85}
+.gauge{height:6px;border-radius:99px;background:var(--fill);margin-top:10px;overflow:hidden}.gauge i{display:block;height:100%;width:0;background:var(--g-green);border-radius:99px;transition:width .4s}
+.chart{flex:1;min-height:80px;position:relative;display:flex;flex-direction:column}.chart svg{flex:1;min-height:0;display:block;width:100%}
+.chart text{fill:var(--g-mute);font-size:10px;font-family:inherit}.chart .grid line{stroke:var(--line);stroke-width:1}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--g-mute);margin-top:6px}.legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:baseline}
+.staterow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.staterow .dv{flex:1;min-width:200px}
+.hear{display:flex;gap:8px;flex:1;min-width:260px;max-width:560px}
+.pipe{display:flex;height:28px;border-radius:99px;overflow:hidden;background:var(--fill);margin:10px 0 6px;gap:2px}
+.pipe i{display:flex;align-items:center;justify-content:center;font-style:normal;font-size:11px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;min-width:0}
+table.dtab{width:100%;border-collapse:collapse;font-size:13px}table.dtab th{color:var(--g-mute);font-weight:600;font-size:12px;text-align:left;padding:6px 8px;border-bottom:1px solid var(--g-line)}
+table.dtab td{padding:8px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}table.dtab tr:last-child td{border-bottom:0}
+.up,.down{font-weight:600;border-radius:99px;padding:2px 8px;font-size:11px}.up{background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--g-green)}.down{background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--g-red)}
+@media (max-width:560px){.entry{grid-template-columns:1fr}}
+/* services: one dot in the header (green all up, yellow some down, red all down); click for the details */
+.svc{display:flex;align-items:center;gap:8px;border:0;background:var(--fill);color:var(--ink);border-radius:99px;padding:6px 14px 6px 12px;font:inherit;font-size:13px;font-weight:500;cursor:pointer;transition:background .15s}
+.svc:hover,.svc[aria-expanded="true"]{background:var(--fill2)}
+.sdot{width:10px;height:10px;border-radius:50%;background:var(--mute);flex:none}
+.sdot.green{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 22%,transparent)}
+.sdot.yellow{background:var(--yellow);box-shadow:0 0 0 3px color-mix(in srgb,var(--yellow) 25%,transparent)}
+.sdot.red{background:var(--bad);box-shadow:0 0 0 3px color-mix(in srgb,var(--bad) 22%,transparent);animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--bad) 8%,transparent)}}
+.svcpop{position:fixed;z-index:25;width:min(420px,calc(100vw - 32px));max-height:min(70vh,560px);overflow:auto;background:color-mix(in srgb,var(--card) 94%,transparent);-webkit-backdrop-filter:saturate(180%) blur(24px);backdrop-filter:saturate(180%) blur(24px);
+ border-radius:16px;box-shadow:0 20px 50px rgba(0,0,0,.22),0 0 0 .5px var(--line);padding:8px;display:none}
+.svcpop.on{display:block}
+.svcpop .hd{display:flex;justify-content:space-between;align-items:baseline;padding:8px 10px 6px;font-weight:600}.svcpop .hd .sub{font-weight:400}
+.srow{display:grid;grid-template-columns:10px 1fr auto;gap:4px 12px;align-items:center;padding:10px;border-radius:10px}
+.srow:hover{background:var(--fill)}
+.srow .nm{font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.srow .ms{font-variant-numeric:tabular-nums;font-size:13px;font-weight:600;text-align:right}
+.srow .dt2{grid-column:2/4;font-size:12px;color:var(--mute);display:flex;gap:10px;align-items:center;min-width:0}
+.srow .dt2 span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.srow svg{width:80px;height:20px;flex:none}
+.srow .sdot{width:8px;height:8px;box-shadow:none;animation:none}
+.dash .media{position:relative}.fpsbadge{position:absolute;top:8px;right:8px;z-index:2;display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:99px;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;color:#fff;background:rgba(0,0,0,.45);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}.fpsbadge[hidden]{display:none}.fpsbadge i{width:7px;height:7px;border-radius:50%}
+</style></head><body>
+<header><h1>🎃</h1><div class="jims" id="jims"></div><button class="b sm" id="jimAdd" title="add another Jim">＋ Jim</button>
+<span style="margin-left:auto"></span>
+<button class="svc" id="svcBtn" aria-haspopup="true" aria-expanded="false" aria-controls="svcPop" title="services and network"><i class="sdot" id="svcDot"></i><span id="svcText">Checking…</span></button>
+<span id="pill" class="pill">…</span>
+<button class="b go" id="startBtn">Start</button><button class="b" id="restartBtn">Restart</button><button class="b" id="stopBtn">Stop</button>
+<button class="b" id="snoozeBtn" title="dark and deaf for a while: time to leave">Snooze</button></header>
+<div class="svcpop" id="svcPop" role="dialog" aria-label="Services"></div>
+<nav id="nav"></nav>
+<main>
+<section class="tab" id="tab-live">
+ <div id="others" class="card" style="display:none"></div>
+ <div class="dash" id="dash">
+  <div class="dhead"><span>Live <span class="sub" id="dashClock"></span></span>
+   <span class="dtools"><select id="dAdd"><option value="">＋ Add panel</option></select><button class="dbtn" id="dReset" title="put every panel back">Reset layout</button><button class="dbtn save" id="dSave" disabled>Layout saved</button></span></div>
+  <div class="dgrid" id="dgrid">
+   <div class="dp" data-id="first_word" data-stat="first_word" data-w="2" data-h="130"><div class="dt">First word</div><div class="dv">—</div><div class="ds">kid stops → Jim speaks · median</div><svg class="dsp"></svg></div>
+   <div class="dp" data-id="think" data-stat="think" data-w="2" data-h="130"><div class="dt">Thinking</div><div class="dv">—</div><div class="ds">first sentence · median</div><svg class="dsp"></svg></div>
+   <div class="dp" data-id="hear" data-stat="hear" data-w="2" data-h="130"><div class="dt">Hearing</div><div class="dv">—</div><div class="ds">speech → text · median</div><svg class="dsp"></svg></div>
+   <div class="dp" data-id="vision" data-stat="vision" data-w="2" data-h="130"><div class="dt">Camera roast</div><div class="dv">—</div><div class="ds">at wake-up · median</div><svg class="dsp"></svg></div>
+   <div class="dp" data-id="wifi" data-stat="wifi" data-w="2" data-h="130"><div class="dt">LED Wi-Fi</div><div class="dv">—</div><div class="ds">signal</div><div class="gauge"><i></i></div></div>
+   <div class="dp" data-id="e2e" data-stat="e2e" data-w="3" data-h="130"><div class="dt">End to end</div><div class="dv">—</div><div class="ds">kid stops talking → Jim's first sound · median</div><svg class="dsp"></svg></div>
+   <div class="dp" data-id="pipe" data-w="9" data-h="130"><div class="dt">Where the time goes <span class="sub">· median of the last replies</span></div>
+    <div class="pipe" id="pipe"></div><div class="legend" id="pipeLegend"></div></div>
+   <div class="dp" data-id="state" data-w="12" data-h="80"><div class="dt">State</div><div class="staterow"><div class="dv" id="stateText" style="font-size:20px">—</div>
+    <form id="hearForm" class="hear"><input type="text" id="hearText" placeholder="Type to Jim, as if a kid said it…" autocomplete="off"><button class="b sm go">Say</button></form></div></div>
+   <div class="dp" data-id="hearing" data-w="2" data-h="360"><div class="dt">Mic level <select class="dsel" id="liveMicSel" title="the mic Jim listens with"></select></div>
+    <div class="vmeter"><div class="vscale"><span style="bottom:100%">0</span><span style="bottom:75%">-20</span><span style="bottom:50%">-40</span><span style="bottom:25%">-60</span><span style="bottom:0">-80</span></div>
+     <div class="vbar" id="vbar" title="drag the white line to change when Jim reacts"><i id="lvl"></i><b id="thr"><span id="thrTag"></span></b></div>
+     <div class="vread"><div class="dv" id="lvlDb">—</div><div class="ds">dBFS</div><div class="ds" id="lvlText" style="margin-top:8px"></div></div></div></div>
+   <div class="dp" data-id="speaker" data-w="2" data-h="360"><div class="dt">Speaker <select class="dsel" id="liveSpkSel" title="the speaker Jim talks through"></select></div>
+    <div class="vmeter"><div class="vscale"><span style="bottom:100%">0</span><span style="bottom:75%">-20</span><span style="bottom:50%">-40</span><span style="bottom:25%">-60</span><span style="bottom:0">-80</span></div>
+     <div class="vbar" style="cursor:default"><i id="spkLvl"></i></div>
+     <div class="vread"><div class="dv" id="spkDb">—</div><div class="ds">dBFS</div><div class="ds" id="spkText" style="margin-top:8px"></div></div></div>
+    <div class="sl" title="Jim's volume, live"><span class="ds">vol</span><input type="range" min="1" max="10" step="1" id="spkVol"><span class="ds" id="spkVolV"></span></div></div>
+   <div class="dp" data-id="live" data-w="4" data-h="360"><div class="dt">Live camera <select class="dsel" id="liveCamSel" title="the camera Jim looks through"></select></div><div class="media"><span class="fpsbadge" id="liveFps" hidden></span><img class="view" id="live" alt=""><div class="ds" id="liveNote">Jim isn't running.</div></div></div>
+   <div class="dp" data-id="judged" data-w="4" data-h="360"><div class="dt">Last frame Jim judged</div><div class="media"><img class="view" id="judged" alt=""><div class="verdict" id="verdict"></div></div></div>
+   <div class="dp" data-id="resp" data-w="6" data-h="270"><div class="dt">Response times <span class="sub">· per reply, seconds</span></div><div class="chart" id="chResp"></div></div>
+   <div class="dp" data-id="mic" data-w="6" data-h="270"><div class="dt">Mic level history <span class="sub">· dBFS, last 2 min · dashed = Jim reacts above</span></div><div class="chart" id="chMic"></div></div>
+   <div class="dp" data-id="events" data-w="6" data-h="320"><div class="dt">What happened</div><div class="scroll"><ul class="log" id="events"></ul></div></div>
+   <div class="dp" data-id="console" data-w="6" data-h="320"><div class="dt">Console</div><pre class="console scroll" id="console"></pre></div>
+  </div>
+ </div>
+ </div>
+</section>
+<section class="tab" id="tab-camera">
+ <div class="row" style="margin-bottom:12px"><button class="b go" id="camAdd">＋ Add camera</button>
+  <span class="sub">The camera marked <span class="badge" style="margin:0">In use</span> is the one Jim looks through (after a restart) and the one on the Live tab.</span></div>
+ <div class="cams" id="cams"><div class="muted">Loading…</div></div>
+ <div class="grid">
+  <div class="card" id="camForm" style="display:none"><h2 id="cfTitle">Add a camera</h2>
+   <div class="field"><label>Name</label><input type="text" id="cfName" placeholder="Driveway camera"></div>
+   <div class="field"><label>Type</label><select id="cfKind"><option value="rtsp">Security camera (RTSP, over the network)</option><option value="usb">USB webcam</option></select></div>
+   <div id="cfRtsp"><div class="field"><label>IP address</label><input type="text" id="cfIp"></div>
+    <div class="field"><label>User</label><input type="text" id="cfUser"></div>
+    <div class="field"><label>Stream path</label><input type="text" id="cfPath" placeholder="h264Preview_01_main"><div class="help">Reolink: h264Preview_01_main</div></div>
+    <div class="field"><label>Password</label><input type="password" id="cfPass" autocomplete="new-password"><div class="help" id="cfPassHelp"></div></div></div>
+   <div id="cfUsb" style="display:none"><div class="field"><label>Device</label><select id="cfDev"></select></div></div>
+   <div class="row"><button class="b go" id="cfSave">Save</button><button class="b" id="cfSaveUse">Save and use</button><button class="b" id="cfCancel">Cancel</button></div></div>
+  <div class="card"><h2>Live preview</h2><img class="view" id="camTest" alt=""><div class="muted" id="camTestNote">Press Live on a camera to watch it here (5 frames a second).</div>
+   <div class="row" style="margin-top:8px"><button class="b" id="camStop">Stop</button></div></div>
+ </div>
+ <div id="fields-camera"></div>
+</section>
+<section class="tab" id="tab-mic">
+ <h2 class="sect">Microphones</h2>
+ <div class="row" style="margin-bottom:12px"><button class="b go" id="micAdd">＋ Add mic</button>
+  <span class="sub">The mic marked <span class="badge" style="margin:0">In use</span> is the one Jim listens with (after a restart), with its sensitivity.</span></div>
+ <div class="cams" id="mics"><div class="muted">Loading…</div></div>
+ <div class="grid">
+  <div class="card" id="micForm" style="display:none"><h2 id="mfTitle">Add a mic</h2>
+   <div class="field"><label>Name</label><input type="text" id="mfName" placeholder="Porch mic"></div>
+   <div class="field"><label>Device</label><select id="mfDev"></select></div>
+   <div class="field"><label>Minimum loudness</label><input type="number" id="mfMin" min="50" step="10" placeholder="automatic"><div class="help" id="mfMinHelp">Jim ignores anything quieter. Use "Test 3 s" to measure.</div></div>
+   <div class="field"><label>Reaction level</label><select id="mfMode"><option value="fixed">Fixed: exactly the minimum loudness above</option>
+    <option value="auto">Automatic: also rises with the room's background noise</option></select>
+    <div class="help">Dragging the line on the Live page sets it fixed.</div></div>
+   <div class="field"><label>Louder than the background by (×) <span class="sub">(automatic only)</span></label><input type="number" id="mfVad" step="0.5" min="1"><div class="help">4 = speech must be 4× louder than the room's noise</div></div>
+   <div class="field"><label>Pause that ends a sentence (s)</label><input type="number" id="mfSil" step="0.1" min="0.3"></div>
+   <div class="field"><label>LED controller mic gain (1–255)</label><input type="number" id="mfGain" min="1" max="255"><div class="help">only for the LED controller's own mic</div></div>
+   <div class="row"><button class="b go" id="mfSave">Save</button><button class="b" id="mfSaveUse">Save and use</button><button class="b" id="mfCancel">Cancel</button></div></div>
+  <div><div class="card"><h2>Test</h2><div class="muted" id="micTestNote">Press "Test 3 s" on a mic and talk at the distance kids will be. (A mic Jim is using can't be tested: watch the live meter instead.)</div>
+   <div id="micResult" style="margin-top:8px"></div><div class="bars" id="micBars"></div></div>
+   <div class="card"><h2>Live (while Jim runs)</h2><div class="meter"><i id="lvl2"></i><b id="thr2"></b></div><div class="muted" id="lvlText2" style="margin-top:6px">—</div></div></div>
+ </div>
+ <h2 class="sect">Speakers</h2>
+ <div class="row" style="margin-bottom:12px"><button class="b go" id="spkAdd">＋ Add speaker</button>
+  <span class="sub">The speaker marked <span class="badge" style="margin:0">In use</span> is the one Jim talks through. Test plays a line on it for real.</span></div>
+ <div class="cams" id="spks"><div class="muted">Loading…</div></div>
+ <div class="grid"><div class="card" id="spkForm" style="display:none"><h2 id="sfTitle">Add a speaker</h2>
+   <div class="field"><label>Name</label><input type="text" id="sfName" placeholder="Porch speaker"></div>
+   <div class="field"><label>Device</label><select id="sfDev"></select></div>
+   <div class="field"><label>Volume</label><div class="sl"><input type="range" min="1" max="10" step="1" id="sfVol"><span class="val" id="sfVolV"></span></div>
+    <div class="help">7 = Jim's voice as made; above 7 is louder and may clip</div></div>
+   <div class="row"><button class="b go" id="sfSave">Save</button><button class="b" id="sfSaveUse">Save and use</button><button class="b" id="sfCancel">Cancel</button></div></div></div>
+</section>
+<section class="tab" id="tab-voice">
+ <div class="grid">
+  <div id="fields-voice"></div>
+  <div><div class="card"><h2>Preview</h2><div class="field"><label>Line</label><textarea id="pvText">Who dares wake me? Nice costume. Did your mom make it, or did she lose a bet?</textarea></div>
+   <div class="row"><button class="b go" id="pv">Hear it</button><button class="b" id="pvGentle">Hear the gentle voice</button></div>
+   <div class="muted" id="pvNote" style="margin-top:6px">Uses the settings on this page, saved or not. Plays here, not on Jim's speaker. The first one takes ~10 s while the voice loads.</div>
+   <audio id="pvAudio" controls style="width:100%;margin-top:8px"></audio></div></div>
+ </div>
+</section>
+<section class="tab" id="tab-responses"><div id="fields-responses" class="grid"></div></section>
+<section class="tab" id="tab-recordings">
+ <div class="grid"><div id="fields-recordings"></div>
+  <div class="card"><h2>Privacy</h2><div class="muted">Recordings hold children's voices and pictures. They stay on this PC in <code id="recDir"></code>, are never committed, and old ones are deleted automatically. Consider a sign at the driveway.</div>
+   <div class="row" style="margin-top:8px"><button class="b" id="recDelAll">Delete all recordings</button></div></div></div>
+ <div class="card"><h2>Visits</h2><div id="visits" class="thumbs muted">—</div></div><div class="card" id="visitCard" style="display:none"><h2 id="visitTitle"></h2><div id="visit"></div></div>
+</section>
+</main>
+<div class="modal" id="nvrModal"><div class="card" style="max-width:1000px;max-height:90vh;overflow:auto">
+ <h2 id="nvrTitle">Cameras on this recorder</h2><div class="sub" id="nvrNote" style="margin-bottom:10px">Looking…</div>
+ <div class="cams" id="nvrList"></div>
+ <div class="row"><button class="b go" id="nvrSave">Save the ticked cameras</button><button class="b" id="nvrClose">Close</button></div></div></div>
+<div class="modal" id="addJim"><div class="card"><h2>Add a Jim</h2>
+ <div class="field"><label>Name</label><input type="text" id="ajName" placeholder="Chris"></div>
+ <div class="field"><label>Personality</label><select id="ajPersona"><option value="chris">Chris: fabulous, flamboyant, a loving fashion critic</option>
+  <option value="jim">Jim: furious, grumpy, an insult comic</option></select><div class="help">Each comes with his own voice, greetings and goodbyes.</div></div>
+ <div class="field"><label>His LED controller's IP address</label><input type="text" id="ajWled" placeholder="192.168.1.51"><div class="help">Each Jim needs his own LED curtain and controller.</div></div>
+ <div class="field"><label><input type="checkbox" id="ajCopy" checked> Copy the timing and reply settings of <span id="ajFrom"></span></label>
+  <div class="help">He starts blind, with his LED controller's mic and the default speaker: pick his camera, mic and speaker on the Camera and Audio tabs.</div></div>
+ <div class="row"><button class="b go" id="ajCreate">Add</button><button class="b" id="ajCancel">Cancel</button><span style="flex:1"></span><button class="b" id="jimRemove">Remove the selected Jim…</button></div></div></div>
+<div class="toast" id="toast"><span id="toastText"></span><button class="b" id="toastBtn" style="display:none">Restart Jim</button></div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"})[c]);
+let JIM = null; try { JIM = localStorage.getItem("jimId") } catch (e) {}
+const u = path => JIM ? path + (path.includes("?") ? "&" : "?") + "jim=" + encodeURIComponent(JIM) : path;   // this Jim's URL
+async function api(path, opts = {}) {
+  const r = await fetch(u(path), {...opts, headers: {"X-Jim-Panel": "1", "Content-Type": "application/json", ...(opts.headers || {})}});
+  if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m } catch (e) {} throw new Error(m) }
+  return r;
+}
+const post = (path, body) => api(path, {method: "POST", body: JSON.stringify(body || {})});
+let toastTimer;
+function toast(text, restart) {
+  $("toastText").textContent = text; $("toastBtn").style.display = restart ? "" : "none";
+  $("toast").style.display = "flex"; clearTimeout(toastTimer); toastTimer = setTimeout(() => $("toast").style.display = "none", restart ? 9000 : 4000);
+}
+$("toastBtn").onclick = () => control("restart");
+
+// ---- which Jim (more than one can run; every tab shows the selected one)
+let JIMLIST = [];
+async function loadJims() {
+  try { JIMLIST = (await (await fetch("/api/jims", {headers: {"X-Jim-Panel": "1"}})).json()).jims } catch (e) { return }
+  if (!JIMLIST.some(j => j.id === JIM)) { JIM = JIMLIST[0]?.id || null }
+  $("jims").innerHTML = JIMLIST.map(j => { const awake = j.state && !j.state.startsWith("dark");
+    return `<button class="jimpill ${j.id === JIM ? "on" : ""}" data-jim="${esc(j.id)}" title="${esc(j.wled ? "LED controller " + j.wled : "")}">
+      <span class="dotj ${j.running ? (awake ? "awake" : "run") : ""}"></span>${esc(j.name)}<span class="st">${j.running ? esc((j.state || "").split(" / ")[0]) : "off"}</span></button>` }).join("");
+  document.title = (JIMLIST.find(j => j.id === JIM)?.name || "Jim") + " · control panel";
+}
+$("jims").onclick = e => { const b = e.target.closest("[data-jim]"); if (b && b.dataset.jim !== JIM) selectJim(b.dataset.jim) };
+async function selectJim(id) {
+  JIM = id; try { localStorage.setItem("jimId", id) } catch (e) {}
+  lastJim = null; judgedAt = 0; liveKey = undefined; for (const k in live) live[k] = [];
+  $("judged").removeAttribute("src"); $("events").innerHTML = ""; $("console").textContent = "";
+  await loadJims(); await loadSettings(); loadCams(true); loadMics(); loadSpeakers();
+  if ($("tab-recordings").classList.contains("on")) loadVisits();
+  pollLive(); updateLive();
+}
+$("jimAdd").onclick = () => { $("ajFrom").textContent = JIMLIST.find(j => j.id === JIM)?.name || "this Jim"; $("jimRemove").style.display = JIMLIST.length > 1 ? "" : "none"; $("addJim").style.display = "flex"; $("ajName").focus() };
+$("ajCancel").onclick = () => { $("addJim").style.display = "none" };
+$("ajCreate").onclick = async () => {
+  try {
+    const d = await (await post("/api/jims", {name: $("ajName").value, wled: $("ajWled").value, copy_from: $("ajCopy").checked ? JIM : null, personality: $("ajPersona").value})).json();
+    $("addJim").style.display = "none"; $("ajName").value = ""; $("ajWled").value = "";
+    await selectJim(d.jim.id); toast(`${d.jim.name} added. Pick his camera, mic and speaker, then press Start.`);
+  } catch (e) { toast("Not added: " + e.message) }
+};
+$("jimRemove").onclick = async () => {
+  const j = JIMLIST.find(x => x.id === JIM); if (!j || !confirm(`Remove ${j.name}? He stops, and his settings file is set aside (not deleted).`)) return;
+  try { await api("/api/jims/" + encodeURIComponent(j.id), {method: "DELETE"}); $("addJim").style.display = "none"; JIM = null; await selectJim(null); toast(`${j.name} removed.`) }
+  catch (e) { toast(e.message) }
+};
+setInterval(loadJims, 3000);
+
+// ---- tabs
+const TABS = [["live", "Live"], ["camera", "Camera"], ["mic", "Audio"], ["voice", "Voice"], ["responses", "Replies"], ["recordings", "Recordings"]];
+function show(name) {
+  for (const [k] of TABS) { $("tab-" + k).classList.toggle("on", k === name); document.querySelector(`nav [data-t=${k}]`).classList.toggle("on", k === name) }
+  try { localStorage.setItem("jimTab", name) } catch (e) {}
+  if (name === "recordings") loadVisits();
+  if (name === "camera") loadCams(true);
+  if (name === "mic") { loadMics(); loadSpeakers() }
+  updateLive();
+  if (name !== "camera" && $("camTest").getAttribute("src")) camStop();
+}
+$("nav").innerHTML = TABS.map(([k, t]) => `<button data-t="${k}">${t}</button>`).join("");
+$("nav").onclick = e => e.target.dataset.t && show(e.target.dataset.t);
+
+// ---- settings forms (built from Jim's own options)
+let S = null, D = {mics: [], speakers: [], cameras: [], models: []};
+const fieldEls = {};
+function fieldHtml(f) {
+  const id = "f_" + f.name, v = f.value;
+  let input;
+  if (f.kind === "bool") input = `<label><input type="checkbox" id="${id}" ${v ? "checked" : ""}>${esc(f.name.replaceAll("_", " "))}</label>`;
+  else if (f.choices) input = `<select id="${id}">${f.choices.map(c => `<option ${c === v ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
+  else if (f.pick) {
+    const opts = (D[f.pick] || []).map(([val, desc]) => `<option value="${esc(val)}" ${val === v ? "selected" : ""}>${esc(desc ? `${desc} — ${val}` : val)}</option>`);
+    if (v != null && !(D[f.pick] || []).some(([val]) => val === v)) opts.unshift(`<option selected value="${esc(v)}">${esc(v)}</option>`);
+    input = `<select id="${id}">${opts.join("")}</select>`;
+  } else if (f.slider) {
+    const pos = toSlider(f);
+    input = `<div class="sl"><input type="range" min="1" max="10" step="1" id="${id}" value="${pos}"><span class="val" id="${id}_v">${sliderLabel(f, pos)}</span></div>`;
+  } else if (f.long) input = `<textarea id="${id}">${esc(v)}</textarea>`;
+  else input = `<input type="${f.kind === "str" ? "text" : "number"}" ${f.kind === "float" ? 'step="any"' : ""} id="${id}" value="${esc(v ?? "")}" placeholder="${f.default == null ? "automatic" : ""}">`;
+  return `<div class="field" data-name="${f.name}">${f.kind === "bool" ? "" : `<label for="${id}">${esc(f.name.replaceAll("_", " "))}</label>`}${input}<div class="help">${esc(f.help)}${f.default != null && f.default !== "" && !f.long ? ` · default ${esc(f.default)}` : ""}</div></div>`;
+}
+const realOf = (f, pos) => { const r = f.slider.base + (pos - 1) * f.slider.step; return f.kind === "int" ? Math.round(r) : +r.toFixed(3) };
+function toSlider(f) {
+  const v = f.value ?? f.slider.auto ?? f.default ?? f.slider.base;
+  return Math.max(1, Math.min(10, Math.round((v - f.slider.base) / f.slider.step) + 1));
+}
+function sliderLabel(f, pos) {
+  const r = realOf(f, pos), unit = /after|timeout|snooze|delay|offset/.test(f.name) ? " s" : "";
+  return `<b>${pos}</b>/10 · ${r}${unit}`;
+}
+function readField(f) {
+  const el = $("f_" + f.name);
+  if (f.slider) return el.dataset.touched ? realOf(f, +el.value) : f.value;
+  if (f.kind === "bool") return el.checked;
+  if (el.value === "" && f.kind !== "str") return null;
+  return f.kind === "int" ? parseInt(el.value) : f.kind === "float" ? parseFloat(el.value) : el.value;
+}
+function renderForms() {
+  for (const [tab, sections] of Object.entries(S.tabs)) {
+    const box = $("fields-" + tab); if (!box) continue;
+    box.innerHTML = sections.map((s, i) => `<div class="card"><h2>${esc(s.title)}</h2>${s.fields.map(fieldHtml).join("")}
+      ${i === sections.length - 1 ? `<div class="row"><button class="b go" data-save="${tab}">Save</button><span class="muted" data-dirty="${tab}"></span></div>` : ""}</div>`).join("");
+    for (const s of sections) for (const f of s.fields) {
+      fieldEls[f.name] = f;
+      const el = $("f_" + f.name);
+      el.addEventListener("input", () => {
+        if (f.slider) { el.dataset.touched = 1; $("f_" + f.name + "_v").innerHTML = sliderLabel(f, +el.value) }
+        el.closest(".field").classList.toggle("changed", JSON.stringify(readField(f)) !== JSON.stringify(f.value));
+      });
+    }
+  }
+}
+document.addEventListener("click", async e => {
+  const tab = e.target.dataset?.save; if (!tab) return;
+  const changes = {};
+  for (const s of S.tabs[tab]) for (const f of s.fields) { const v = readField(f); if (v !== null && JSON.stringify(v) !== JSON.stringify(f.value)) changes[f.name] = v }
+  if (!Object.keys(changes).length) return toast("Nothing changed");
+  try {
+    const d = await (await post("/api/settings", changes)).json();
+    for (const [k, v] of Object.entries(changes)) { fieldEls[k].value = v; $("f_" + k).closest(".field").classList.remove("changed"); delete $("f_" + k).dataset.touched }
+    toast(d.restart ? "Saved. Restart Jim to use it." : "Saved.", d.restart);
+  } catch (err) { toast("Not saved: " + err.message) }
+});
+async function loadSettings() {
+  [S, D] = await Promise.all([api("/api/settings").then(r => r.json()), api("/api/devices").then(r => r.json())]);
+  renderForms();
+}
+
+// ---- Jim: start / stop / status
+let status = {};
+async function control(what, pid) {
+  try { status = await (await post("/api/jim/" + what, pid ? {pid} : {})).json(); paintStatus(); toast(what === "stop" ? "Jim stopped." : "Jim is starting… (the voice and brain take ~20 s)") }
+  catch (e) { toast(e.message) }
+}
+$("startBtn").onclick = () => control("start"); $("stopBtn").onclick = () => control("stop"); $("restartBtn").onclick = () => control("restart");
+$("snoozeBtn").onclick = async () => { try { await post("/api/snooze", {seconds: fieldEls.snooze?.value || 10}); toast("Snoozing: dark and deaf for a bit.") } catch (e) { toast(e.message) } };
+function paintStatus() {
+  const on = status.running;
+  $("pill").textContent = on ? `running · ${Math.round(status.uptime_s / 60)} min` : status.others?.length ? "running elsewhere" : "stopped";
+  $("pill").className = "pill " + (on ? "on" : status.others?.length ? "warn" : "");
+  $("startBtn").disabled = on; $("stopBtn").disabled = !on; $("restartBtn").disabled = !on; $("snoozeBtn").disabled = !on;
+  const others = status.others || [];
+  $("others").style.display = others.length ? "" : "none";
+  $("others").innerHTML = others.length ? `<h2>Jim is running outside the panel</h2><div class="muted">Started with ./start.sh (pid ${others.join(", ")}). Only one copy can use the mic, so stop it to run him from here.</div>
+    <div class="row" style="margin-top:8px">${others.map(p => `<button class="b" data-kill="${p}">Stop pid ${p}</button>`).join("")}</div>` : "";
+  const con = $("console"), atEnd = con.scrollTop + con.clientHeight >= con.scrollHeight - 20;
+  con.textContent = (status.log || []).join("\n"); if (atEnd) con.scrollTop = con.scrollHeight;
+  paintLiveNote && paintLiveNote();
+}
+document.addEventListener("click", e => { if (e.target.dataset?.kill) control("stop", +e.target.dataset.kill) });
+
+// ---- live view (Jim's own viewer, through the panel)
+let judgedAt = 0;
+const dbfs = v => v > 0 ? 20 * Math.log10(v / 32768) : -90;
+const pctDb = db => Math.max(0, Math.min(100, (db + 80) / 80 * 100));      // -80..0 dBFS -> 0..100 %
+let thrDrag = null;                                          // dB while the white line is being dragged
+function vmeter(mic) {
+  lastMic = mic;
+  if (mic.age_s == null || mic.age_s > 2) {                 // no sound frames: the mic is unplugged or failed
+    $("lvl").style.height = "100%"; $("lvlDb").textContent = "no sound"; $("lvlDb").style.color = "var(--bad)";
+    $("lvlText").textContent = "The microphone isn't sending anything (unplugged?). Jim keeps retrying."; return;
+  }
+  const db = dbfs(mic.level), th = thrDrag ?? dbfs(mic.thresh), on = mic.level > mic.thresh && !mic.muted;
+  $("vbar").classList.toggle("muted", !!mic.muted);
+  $("lvl").style.height = (100 - pctDb(db)) + "%"; $("thr").style.bottom = `calc(${pctDb(th)}% - 1px)`;
+  $("thrTag").textContent = Math.round(th) + " dB";
+  $("lvlDb").textContent = db <= -89 ? "—" : Math.round(db) + " dB"; $("lvlDb").style.color = on ? "var(--ok)" : "var(--mute)";
+  const floorHigher = !mic.fixed && mic.min_rms && mic.thresh > mic.min_rms * 1.05;
+  if (mic.muted) { $("lvlDb").style.color = "var(--mute)"; $("lvlText").innerHTML = "ears paused while Jim talks<br>(so he doesn't hear himself)"; return }
+  $("lvlText").innerHTML = `Jim reacts above <b>${Math.round(th)} dB</b>${mic.fixed ? " (fixed)" : ""}` + (on ? "<br>hearing something" : "")
+    + (floorHigher && thrDrag == null ? `<br><span title="Jim also needs speech to be several times louder than the room's background noise">set to ${Math.round(dbfs(mic.min_rms))} dB; the background noise raises it now</span>` : "");
+}
+let lastMic = null;
+$("hearForm").onsubmit = async e => {
+  e.preventDefault(); const t = $("hearText").value.trim(); if (!t) return;
+  try { await post("/api/hear", {text: t}); $("hearText").value = ""; toast(`Said to ${JIMLIST.find(j => j.id === JIM)?.name || "Jim"}: "${t}"`) }
+  catch (err) { toast(err.message) }
+};
+function smeter(sp) {
+  const db = dbfs(sp.level);
+  $("spkLvl").style.height = (100 - (sp.playing ? pctDb(db) : 0)) + "%";
+  $("spkDb").textContent = sp.playing && db > -89 ? Math.round(db) + " dB" : "quiet"; $("spkDb").style.color = sp.playing ? "var(--ok)" : "var(--mute)";
+  $("spkText").textContent = sp.playing ? "Jim is talking" : "";
+  if (document.activeElement !== $("spkVol")) { const pos = volPos(sp.volume); $("spkVol").value = pos; $("spkVolV").textContent = `${pos}/10` }
+}
+// drag the white line: Jim's minimum loudness (min_rms), live in Jim and kept in jim.toml and the mic in use
+$("vbar").addEventListener("pointerdown", e => {
+  if (!status.running) return toast("Start Jim to change his reaction level here (or use the Mic tab).");
+  e.preventDefault(); e.stopPropagation();
+  const bar = $("vbar"), r = bar.getBoundingClientRect();
+  const dbAt = y => Math.max(-80, Math.min(-3, -80 + (1 - (y - r.top) / r.height) * 80));
+  bar.classList.add("dragging"); bar.setPointerCapture(e.pointerId);
+  thrDrag = dbAt(e.clientY); if (lastMic) vmeter(lastMic);
+  const move = ev => { thrDrag = dbAt(ev.clientY); if (lastMic) vmeter(lastMic) };
+  const up = async () => {
+    bar.classList.remove("dragging"); bar.removeEventListener("pointermove", move); bar.removeEventListener("pointerup", up);
+    const rms = Math.round(32768 * Math.pow(10, thrDrag / 20)), db = Math.round(thrDrag);
+    try { const d = await (await post("/api/mic/level", {min_rms: rms})).json(); toast(`Jim now reacts above ${db} dB, fixed` + (d.live ? "." : ": saved; restart Jim to use it.")); loadMics() }
+    catch (err) { toast("Not changed: " + err.message) }
+    setTimeout(() => { thrDrag = null }, 1200);                 // until Jim reports the new level
+  };
+  bar.addEventListener("pointermove", move); bar.addEventListener("pointerup", up);
+});
+async function pollMic() {
+  if (!status.running || !$("tab-live").classList.contains("on")) return;
+  try { const m = await (await api("/jim/mic.json")).json(); vmeter(m); if (m.speaker) smeter(m.speaker) } catch (e) {}
+}
+setInterval(pollMic, 200);
+function meter(i, b, t, mic) {
+  const top = Math.max(mic.thresh * 2.5, 1);
+  $(i).style.width = Math.min(100, mic.level / top * 100) + "%"; $(b).style.left = Math.min(100, mic.thresh / top * 100) + "%";
+  $(t).textContent = `loudness ${mic.level} · Jim reacts above ${mic.thresh}` + (mic.level > mic.thresh ? " · hearing something" : "");
+}
+async function pollLive() {
+  try { status = await (await api("/api/status")).json(); paintStatus() } catch (e) {}
+  if (!status.running) { lastJim = null; sample(null); paintDash(); return }
+  try {
+    const d = await (await api("/jim/events.json")).json();
+    lastJim = d; sample(d); paintDash();
+    $("stateText").textContent = d.state + (d.snooze_left ? ` · snoozing ${d.snooze_left} s` : "") + (d.recording ? " · recording" : "");
+    if (d.mic) meter("lvl2", "thr2", "lvlText2", d.mic);
+    if (d.judged_at && d.judged_at !== judgedAt) { judgedAt = d.judged_at; $("judged").src = u("/jim/judged.jpg?" + judgedAt) }
+    const v = d.verdict;
+    $("verdict").className = "verdict " + (v ? (v.error ? "err" : v.visible ? "yes" : "no") : "");
+    $("verdict").textContent = v ? (v.error ? "⚠ " + v.error : (v.visible ? "Sees trick-or-treaters" : "Sees nobody") + (v.seconds != null ? ` · ${v.seconds} s` : "")) : judgedAt ? "" : "Nothing judged yet: wake Jim up.";
+    $("events").innerHTML = d.events.slice().reverse().map(e => `<li><span class="t">${esc(e.time)}</span>${esc(e.text)}</li>`).join("");
+  } catch (e) {}
+}
+setInterval(pollLive, 1000);
+// the Live camera shows the input chosen on the Camera tab (saved or not), as a live stream while the Live tab is open
+let liveKey = undefined, liveSince = 0;
+function liveInput() {
+  const c = CAMS.cameras.find(c => c.id === CAMS.active);
+  return c ? {source: c.kind, dev: c.id, name: c.name} : null;
+}
+function updateLive() {
+  const on = $("tab-live").classList.contains("on"), inp = on ? liveInput() : null;
+  const key = inp ? inp.source + inp.dev : null;
+  if (key === liveKey && !(key && Date.now() - liveSince > 540e3)) return;     // the server ends a stream after 10 min
+  liveKey = key; liveSince = Date.now();
+  const img = $("live");
+  if (!inp) { img.removeAttribute("src"); $("liveNote").textContent = on ? "No camera in use (Camera tab)." : ""; return }
+  img.onerror = () => { img.removeAttribute("src"); $("liveNote").textContent = `⚠ No picture from ${inp.name}.`; setTimeout(() => { liveKey = undefined }, 5000) };
+  img.src = u(`/api/camera/stream?cam=${encodeURIComponent(inp.dev)}&t=${Date.now()}`);
+  paintLiveNote();
+}
+function paintLiveNote() {
+  const inp = liveInput(); if (!inp) return;
+  const name = inp.name;
+  const jims = status.running && lastJim?.camera ? lastJim.camera.kind : null;
+  $("liveNote").textContent = name + (jims && jims !== inp.source ? ` · Jim still sees the ${jims === "usb" ? "USB webcam" : "security camera"} until you save and restart him` : "");
+}
+setInterval(updateLive, 1000);
+
+// ---- metrics dashboard (Grafana-style; plain SVG)
+// chart colours come from the page's colour tokens, so they follow light and dark mode
+const TOKENS = {green: "--ok", yellow: "--yellow", red: "--bad", blue: "--blue", orange: "--orange", purple: "--purple", mute: "--mute"};
+const G = new Proxy({}, {get: (_, k) => getComputedStyle(document.documentElement).getPropertyValue(TOKENS[k] || "--ink").trim()});
+const fmtS = v => v == null ? "—" : v >= 1 ? v.toFixed(2) + " s" : Math.round(v * 1000) + " ms";
+const median = a => { const b = a.filter(v => v != null).sort((x, y) => x - y); return b.length ? (b.length % 2 ? b[(b.length - 1) / 2] : (b[b.length / 2 - 1] + b[b.length / 2]) / 2) : null };
+// thresholds: [green below, yellow below]; else red. "up" = bigger is better
+const STAT = {e2e: {t: [2.5, 4]}, first_word: {t: [1.5, 3]}, think: {t: [1, 2.5]}, hear: {t: [0.5, 1.5]}, vision: {t: [2, 4]},
+              fps: {t: [1, 0.5], up: true}, wifi: {t: [60, 35], up: true}};
+const color = (k, v) => { if (v == null) return G.mute; const [a, b] = STAT[k].t; return STAT[k].up ? (v >= a ? G.green : v >= b ? G.yellow : G.red) : (v < a ? G.green : v < b ? G.yellow : G.red) };
+function sparkArea(svg, vals, col) {
+  const v = vals.filter(x => x != null); if (v.length < 2) { svg.innerHTML = ""; return }
+  const hi = Math.max(...v), lo = Math.min(...v, 0), n = vals.length;
+  const pts = vals.map((x, i) => x == null ? null : [i / (n - 1) * 100, 40 - (x - lo) / (hi - lo || 1) * 36]).filter(Boolean);
+  const line = pts.map(p => p.join(",")).join(" ");
+  svg.setAttribute("viewBox", "0 0 100 40"); svg.setAttribute("preserveAspectRatio", "none");
+  svg.innerHTML = `<polygon points="${pts[0][0]},40 ${line} ${pts.at(-1)[0]},40" fill="${col}" opacity=".18"/><polyline points="${line}" fill="none" stroke="${col}" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`;
+}
+function stat(k, value, text, series) {
+  const p = document.querySelector(`[data-stat="${k}"]`), col = color(k, value);
+  p.querySelector(".dv").textContent = text; p.querySelector(".dv").style.color = col;
+  const sv = p.querySelector("svg.dsp"); if (sv) sparkArea(sv, series || [], col);
+  const g = p.querySelector(".gauge i"); if (g) { g.style.width = (value || 0) + "%"; g.style.background = col }
+}
+const nice = v => { const e = Math.pow(10, Math.floor(Math.log10(v || 1))), f = v / e; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * e };
+// series: [{name, color, values (y or null), dash}], x: 0..n-1 spread evenly; xlabels: [left, right]
+function chart(el, series, {unit = "", xlabels = ["", ""], floor0 = true} = {}) {
+  const W = el.clientWidth || 400, H = Math.max(60, (el.clientHeight || 190) - 22), L = 38, R = 8, T = 8, B = 18, w = W - L - R, h = H - T - B;
+  const all = series.flatMap(s => s.values).filter(v => v != null);
+  if (!all.length) { el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="height:${H}px"><text x="${W / 2}" y="${H / 2}" text-anchor="middle">No data yet</text></svg>`; return }
+  const mx = Math.max(...all), mn = Math.min(...all), ticks = 4;
+  let lo = 0, top = nice(mx * 1.1);
+  if (!floor0) { const pad = Math.max((mx - mn) * 0.1, 2); lo = Math.floor((mn - pad) / 10) * 10; top = Math.ceil((mx + pad) / 10) * 10 }
+  const y = v => T + h - (v - lo) / (top - lo || 1) * h;
+  let g = `<g class="grid">`;
+  for (let i = 0; i <= ticks; i++) { const v = lo + (top - lo) * i / ticks, yy = y(v);
+    g += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}"/><text x="${L - 5}" y="${yy + 3}" text-anchor="end">${+v.toFixed(2)}${unit}</text>` }
+  g += `</g><text x="${L}" y="${H - 4}">${xlabels[0]}</text><text x="${W - R}" y="${H - 4}" text-anchor="end">${xlabels[1]}</text>`;
+  for (const s of series) {
+    const n = s.values.length; if (!n) continue;
+    const x = i => L + (n > 1 ? i / (n - 1) * w : w);
+    let path = "", pen = false;
+    s.values.forEach((v, i) => { if (v == null) { pen = false; return } path += (pen ? "L" : "M") + x(i).toFixed(1) + "," + y(v).toFixed(1); pen = true });
+    if (s.fill && path) g += `<path d="${path}L${x(n - 1)},${T + h}L${x(s.values.findIndex(v => v != null))},${T + h}Z" fill="${s.color}" opacity=".12"/>`;
+    g += `<path d="${path}" fill="none" stroke="${s.color}" stroke-width="1.6" ${s.dash ? 'stroke-dasharray="4 3"' : ""}/>`;
+    if (n < 25) s.values.forEach((v, i) => { if (v != null) g += `<circle cx="${x(i)}" cy="${y(v)}" r="2.2" fill="${s.color}"/>` });
+  }
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="height:${H}px">${g}</svg><div class="legend">${series.map(s => {
+    const last = s.values.filter(v => v != null).at(-1); return `<span><i style="background:${s.color}"></i>${esc(s.name)}${last != null ? ` <b style="color:var(--ink)">${+last.toFixed(2)}${unit}</b>` : ""}</span>` }).join("")}</div>`;
+}
+const live = {mic: [], thr: [], fps: []};      // 1-second samples kept in the page (2 minutes)
+let lastJim = null, net = {};
+function paintDash() {
+  const m = lastJim?.metrics || {}, cam = status.running ? lastJim?.camera : null;
+  for (const k of ["e2e", "first_word", "think", "hear", "vision"]) { const a = m[k] || []; stat(k, median(a), fmtS(median(a)), a) }
+  const parts = [["wait", "waiting for the kid to finish", "var(--mute)"], ["hear", "hearing", G.blue], ["think", "thinking", G.yellow], ["speak", "voice", G.orange]]
+    .map(([k, name, color]) => ({k, name, color, v: median(m[k] || [])}));
+  const total = parts.reduce((a, p) => a + (p.v || 0), 0);
+  $("pipe").innerHTML = total ? parts.map(p => p.v ? `<i style="width:${p.v / total * 100}%;background:${p.color}" title="${p.name}: ${fmtS(p.v)}">${p.v / total > .08 ? fmtS(p.v) : ""}</i>` : "").join("") : "";
+  $("pipeLegend").innerHTML = total ? parts.map(p => `<span><i style="background:${p.color}"></i>${p.name} <b style="color:var(--ink)">${fmtS(p.v)}</b></span>`).join("")
+    + `<span>= <b style="color:var(--ink)">${fmtS(total)}</b></span>` : `<span>Talk to Jim to measure this.</span>`;
+  $("liveFps").hidden = !cam;                                    // frame rate, on the live picture itself
+  if (cam) { $("liveFps").innerHTML = `<i style="background:${color("fps", cam.fps)}"></i>${cam.fps.toFixed(1)} fps`; $("liveFps").title = `newest frame ${cam.age_s ?? "—"} s old · ${cam.reconnects} reconnects` }
+  const me = JIMLIST.find(j => j.id === JIM)?.name, led = (net[`LED controller · ${me}`] || net["LED controller"])?.extra || {};
+  stat("wifi", led.wifi ?? null, led.wifi != null ? led.wifi + "%" : "—");
+  const n = Math.max(0, ...["hear", "think", "first_word"].map(k => (m[k] || []).length));
+  chart($("chResp"), [["e2e", "end to end", G.red], ["first_word", "first word", G.green], ["think", "thinking", G.yellow], ["hear", "hearing", G.blue]]
+    .map(([k, name, color]) => ({name, color, values: m[k] || []})), {unit: "s", xlabels: n ? [`reply ${Math.max(1, n - 29)}`, `reply ${n}`] : ["", ""]});
+  chart($("chMic"), [{name: "loudness", color: G.green, values: live.mic, fill: true}, {name: "Jim reacts above", color: G.red, values: live.thr, dash: true}],
+    {xlabels: ["-2 min", "now"], unit: " dB", floor0: false});
+  paintServices(cam);
+  $("dashClock").textContent = new Date().toLocaleTimeString() + (status.running ? "" : " · Jim isn't running");
+}
+function sample(d) {
+  const push = (k, v) => { live[k].push(v); if (live[k].length > 120) live[k].shift() };
+  push("mic", d?.mic ? Math.max(-80, dbfs(d.mic.level)) : null); push("thr", d?.mic ? dbfs(d.mic.thresh) : null); push("fps", d?.camera ? d.camera.fps : null);
+}
+// ---- services: the header's dot is green when every service is up, red when all are down, yellow in between
+const msColor = ms => ms == null ? G.red : ms < 50 ? G.green : ms < 250 ? G.yellow : G.red;
+function paintServices(cam) {
+  const rows = Object.entries(net).map(([name, c]) => ({name, ok: c.ok, ms: c.ms, detail: c.detail, history: c.history || []}));
+  if (cam) rows.push({name: "Camera stream", ok: cam.age_s != null && cam.age_s < 3, ms: null, fps: cam.fps,
+                      detail: `${cam.fps} fps · newest frame ${cam.age_s ?? "—"} s old · ${cam.reconnects} reconnects`, history: []});
+  const up = rows.filter(r => r.ok).length, state = !rows.length ? "" : up === rows.length ? "green" : up ? "yellow" : "red";
+  $("svcDot").className = "sdot " + state;
+  $("svcText").textContent = !rows.length ? "Checking…" : up === rows.length ? "All systems go" : up ? `${rows.length - up} of ${rows.length} down` : "All down";
+  if (!$("svcPop").classList.contains("on")) return;          // only build the details while they're open
+  $("svcPop").innerHTML = `<div class="hd">Services <span class="sub">${up} of ${rows.length} up · every 5 s</span></div>` + rows.map(r => `
+    <div class="srow"><i class="sdot ${r.ok ? "green" : "red"}"></i><span class="nm">${esc(r.name)}</span>
+     <span class="ms" style="color:${r.ok ? (r.fps != null ? G.green : msColor(r.ms)) : G.red}">${!r.ok ? (r.fps != null ? "stale" : "down") : r.fps != null ? r.fps + " fps" : r.ms + " ms"}</span>
+     <div class="dt2"><span title="${esc(r.detail || "")}">${esc(r.detail || "")}</span>${r.history.filter(v => v != null).length > 1 ? `<svg data-spark="${esc(r.name)}"></svg>` : ""}</div></div>`).join("")
+    || `<div class="srow"><span class="nm muted" style="grid-column:1/4">Checking…</span></div>`;
+  for (const r of rows) { const sv = $("svcPop").querySelector(`svg[data-spark="${CSS.escape(r.name)}"]`); if (sv) sparkArea(sv, r.history, r.ok ? msColor(r.ms) : G.red) }
+}
+function placeSvc() {
+  const b = $("svcBtn").getBoundingClientRect(), pop = $("svcPop"), w = pop.offsetWidth;
+  pop.style.top = b.bottom + 8 + "px"; pop.style.left = Math.max(16, Math.min(innerWidth - w - 16, b.right - w)) + "px";
+}
+function toggleSvc(open = !$("svcPop").classList.contains("on")) {
+  $("svcPop").classList.toggle("on", open); $("svcBtn").setAttribute("aria-expanded", open);
+  if (open) { paintServices(status.running ? lastJim?.camera : null); placeSvc() }
+}
+$("svcBtn").onclick = e => { e.stopPropagation(); toggleSvc() };
+document.addEventListener("click", e => { if (!e.target.closest("#svcPop, #svcBtn")) toggleSvc(false) });
+document.addEventListener("keydown", e => { if (e.key === "Escape") toggleSvc(false) });
+addEventListener("resize", () => { if ($("svcPop").classList.contains("on")) placeSvc() });
+async function pollNet() { try { net = (await (await api("/api/network")).json()).checks; paintDash() } catch (e) {} }
+setInterval(pollNet, 5000); pollNet();
+addEventListener("resize", () => paintDash());
+
+// ---- dashboard layout (Grafana-style): a 12-column grid; each panel has x, y, w, h (h in 20 px rows). Drag a panel by its
+// title anywhere (tiles stack; whatever is in the way moves down, gaps close upward), resize from the corner, close with x.
+// "Save layout" keeps it on the panel's server for every browser; unsaved changes are kept as a draft in this browser.
+const ROW = 20, GAP = 8, COLS = 12;
+const grid = $("dgrid"), panel = id => grid.querySelector(`[data-id="${id}"]`);
+const PANELS = [...grid.children].map(p => ({id: p.dataset.id, w: +p.dataset.w, h: Math.max(3, Math.round((+p.dataset.h + GAP) / (ROW + GAP)))}));
+let layout = [], saved = null;
+const hit = (a, b) => a !== b && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+const shown = () => layout.filter(l => !l.hidden);
+function place(items) {                  // items without a position go into the first free spot, top to bottom
+  const done = items.filter(it => it.x != null && it.y != null);   // check against every placed panel, not just earlier ones
+  for (const it of items) {
+    if (it.x == null || it.y == null) {
+      for (let y = 0, found = false; !found; y++) for (let x = 0; x + it.w <= COLS && !found; x++) {
+        it.x = x; it.y = y; found = !done.some(d => hit(d, it));
+      }
+      done.push(it);
+    }
+  }
+  return items;
+}
+function settle(fixed) {                 // push overlaps down (the panel being moved keeps its spot), then float everything up
+  const items = shown().sort((a, b) => (a === fixed ? -1 : b === fixed ? 1 : a.y - b.y || a.x - b.x));
+  const done = [];
+  for (const it of items) {
+    it.x = Math.max(0, Math.min(COLS - it.w, it.x)); it.y = Math.max(0, it.y);
+    if (it !== fixed) while (done.some(d => hit(d, it))) it.y = Math.max(...done.filter(d => hit(d, it)).map(d => d.y + d.h));
+    done.push(it);
+  }
+  for (const it of [...items].sort((a, b) => a.y - b.y || a.x - b.x)) {
+    if (it === fixed) continue;
+    while (it.y > 0) { it.y--; if (items.some(o => hit(o, it))) { it.y++; break } }
+  }
+}
+const snapshot = () => JSON.stringify(layout.map(({id, x, y, w, h, hidden}) => ({id, x, y, w, h, hidden: !!hidden})));
+function dirty() { return saved !== snapshot() }
+function draft() { try { localStorage.setItem("jimDashDraft", snapshot()) } catch (e) {} ; paintSave() }
+function paintSave() { const d = dirty(); $("dSave").disabled = !d; $("dSave").textContent = d ? "Save layout •" : "Layout saved" }
+function fromList(list) {
+  const known = new Map(PANELS.map(p => [p.id, p]));
+  const out = (list || []).filter(l => known.has(l.id)).map(l => ({...known.get(l.id), ...l}));
+  // panels added since the layout was saved get rows of their own at the top; the saved ones move down below them
+  const fresh = PANELS.filter(p => !out.some(l => l.id === p.id)).map(p => ({...p, x: null, y: null}));
+  if (list?.length && fresh.length) {
+    let x = 0, y = 0, rowH = 0;
+    for (const p of fresh) { if (x + p.w > COLS) { x = 0; y += rowH; rowH = 0 } p.x = x; p.y = y; x += p.w; rowH = Math.max(rowH, p.h) }
+    for (const l of out) if (l.y != null) l.y += y + rowH;
+  }
+  out.push(...fresh);
+  return out;
+}
+function applyLayout(fixed = null) {
+  place(shown()); settle(fixed);
+  for (const l of layout) {
+    const el = panel(l.id);
+    el.style.display = l.hidden ? "none" : "";
+    el.style.gridColumn = `${l.x + 1} / span ${l.w}`; el.style.gridRow = `${l.y + 1} / span ${l.h}`; el.style.height = "";
+    el.style.order = l.y * COLS + l.x;                                   // phone width: one column in reading order
+  }
+  // every panel is listed: closed ones (x) are added back, ones already showing are scrolled to and highlighted
+  const hidden = layout.filter(l => l.hidden), title = l => esc(panel(l.id).querySelector(".dt").firstChild.textContent.trim());
+  $("dAdd").innerHTML = `<option value="">＋ Add panel${hidden.length ? ` (${hidden.length} closed)` : ""}</option>` +
+    (hidden.length ? `<optgroup label="Closed: add back">${hidden.map(l => `<option value="${l.id}">${title(l)}</option>`).join("")}</optgroup>` : "") +
+    `<optgroup label="Already showing: find it">${shown().map(l => `<option value="${l.id}">${title(l)}</option>`).join("")}</optgroup>`;
+  paintDash(); paintSave();
+}
+function cellAt(clientX, clientY) {
+  const r = grid.getBoundingClientRect(), col = (r.width + GAP) / COLS;
+  return {x: Math.floor((clientX - r.left) / col), y: Math.floor((clientY - r.top) / (ROW + GAP)), col};
+}
+for (const el of grid.children) {
+  const head = el.querySelector(".dt");
+  head.insertAdjacentHTML("beforeend", `<button class="x" title="close this panel">×</button>`);
+  el.insertAdjacentHTML("beforeend", `<div class="rs" title="drag to resize"></div>`);
+  head.querySelector(".x").onclick = () => { layout.find(l => l.id === el.dataset.id).hidden = true; applyLayout(); draft() };
+  head.addEventListener("pointerdown", e => {                           // move
+    if (e.target.closest(".x, select, input") || e.button !== 0 || innerWidth <= 700) return;
+    e.preventDefault();
+    const l = layout.find(x => x.id === el.dataset.id), start = cellAt(e.clientX, e.clientY), x0 = l.x, y0 = l.y;
+    const orig = new Map(layout.map(o => [o, {x: o.x, y: o.y}]));      // others start from here on every move
+    el.classList.add("dragging"); head.setPointerCapture(e.pointerId);
+    let last = "";
+    const move = ev => {
+      const c = cellAt(ev.clientX, ev.clientY), nx = x0 + c.x - start.x, ny = Math.max(0, y0 + c.y - start.y);
+      if (`${nx},${ny}` === last) return;
+      last = `${nx},${ny}`;
+      for (const [o, p] of orig) Object.assign(o, p);
+      l.x = nx; l.y = ny; applyLayout(l);
+    };
+    const up = () => { el.classList.remove("dragging"); head.removeEventListener("pointermove", move); head.removeEventListener("pointerup", up);
+      settle(null); applyLayout(); draft() };
+    head.addEventListener("pointermove", move); head.addEventListener("pointerup", up);
+  });
+  el.querySelector(".rs").addEventListener("pointerdown", e => {      // resize
+    e.preventDefault(); e.stopPropagation();
+    const l = layout.find(x => x.id === el.dataset.id), start = cellAt(e.clientX, e.clientY), w0 = l.w, h0 = l.h;
+    const orig = new Map(layout.map(o => [o, {x: o.x, y: o.y}]));
+    el.classList.add("resizing"); e.target.setPointerCapture(e.pointerId);
+    const move = ev => {
+      const c = cellAt(ev.clientX, ev.clientY);
+      const w = Math.max(2, Math.min(COLS - l.x, w0 + c.x - start.x)), h = Math.max(3, Math.min(40, h0 + c.y - start.y));
+      if (w === l.w && h === l.h) return;
+      for (const [o, p] of orig) Object.assign(o, p);
+      l.w = w; l.h = h; applyLayout(l);
+    };
+    const up = () => { el.classList.remove("resizing"); e.target.removeEventListener("pointermove", move); e.target.removeEventListener("pointerup", up); draft() };
+    e.target.addEventListener("pointermove", move); e.target.addEventListener("pointerup", up);
+  });
+}
+$("dAdd").onchange = e => {
+  const l = layout.find(x => x.id === e.target.value);
+  if (!l) return;
+  if (l.hidden) { l.hidden = false; l.x = l.y = null; applyLayout(); draft() }   // back into the first free spot
+  else e.target.value = "";
+  const el = panel(l.id);
+  el.scrollIntoView({behavior: "smooth", block: "center"});
+  el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+};
+$("dReset").onclick = () => { layout = fromList([]); applyLayout(); draft() };
+$("dSave").onclick = async () => {
+  try { await post("/api/layout", JSON.parse(snapshot())); saved = snapshot(); try { localStorage.removeItem("jimDashDraft") } catch (e) {} paintSave(); toast("Layout saved.") }
+  catch (e) { toast("Not saved: " + e.message) }
+};
+async function loadLayout() {
+  let server = null, local = null;
+  try { server = (await (await api("/api/layout")).json()).layout } catch (e) {}
+  try { local = JSON.parse(localStorage.getItem("jimDashDraft") || "null") } catch (e) {}
+  layout = fromList(server); place(shown()); settle(null); saved = server ? snapshot() : null;
+  if (local) layout = fromList(local);
+  applyLayout();
+}
+try { localStorage.removeItem("jimDash") } catch (e) {}                 // the old flow layout
+loadLayout();
+
+// ---- saved cameras
+let CAMS = {cameras: [], active: null, devices: []}, editingCam = null;
+async function loadCams(snaps) {
+  try { CAMS = await (await api("/api/cameras")).json() } catch (e) { return }
+  paintCams(snaps); liveKey = undefined; updateLive();
+}
+function liveSelects() {
+  $("liveCamSel").innerHTML = CAMS.cameras.map(c => `<option value="${esc(c.id)}" ${c.id === CAMS.active ? "selected" : ""}>${esc(c.name)}</option>`).join("")
+    + (CAMS.active ? "" : `<option value="" selected>none in use</option>`);
+  $("liveSpkSel").innerHTML = SPK.speakers.map(x => `<option value="${esc(x.id)}" ${x.id === SPK.active ? "selected" : ""}>${esc(x.name)}</option>`).join("")
+    + (SPK.active ? "" : `<option value="" selected>custom (Audio tab)</option>`);
+  $("liveMicSel").innerHTML = MICS.mics.map(m => `<option value="${esc(m.id)}" ${m.id === MICS.active ? "selected" : ""}>${esc(m.name)}</option>`).join("")
+    + (MICS.active ? "" : `<option value="" selected>custom (Mic tab)</option>`);
+}
+async function useFromLive(kind, id) {
+  const list = {cameras: CAMS.cameras, mics: MICS.mics, speakers: SPK.speakers}[kind], item = list.find(x => x.id === id); if (!item) return;
+  try {
+    const d = await (await post(`/api/${kind}/${encodeURIComponent(id)}/use`)).json();
+    await ({cameras: () => loadCams(false), mics: loadMics, speakers: loadSpeakers}[kind])();
+    const who = JIMLIST.find(j => j.id === JIM)?.name || "Jim";
+    toast((d.live ? `${who} is now ${{cameras: "looking through", mics: "listening with", speakers: "talking through"}[kind]} ${item.name}.` : `${item.name} is ${who}'s (from his next start).`)
+      + (d.shared?.length ? ` ⚠ ${d.shared.join(", ")} also uses it, and two Jims can't share it.` : ""));
+  } catch (e) { toast(e.message); liveSelects() }
+}
+$("liveCamSel").onchange = e => useFromLive("cameras", e.target.value);
+$("liveMicSel").onchange = e => useFromLive("mics", e.target.value);
+$("liveSpkSel").onchange = e => useFromLive("speakers", e.target.value);
+function paintCams(snaps) {
+  liveSelects();
+  $("cams").innerHTML = CAMS.cameras.map(c => `<div class="camcard ${c.id === CAMS.active ? "active" : ""}" data-cam="${esc(c.id)}">
+    <div class="thumb"><img data-snap="${esc(c.id)}" alt=""><span class="snapnote muted">Press ⟳ for a preview</span></div>
+    <div><b>${esc(c.name)}</b>${c.id === CAMS.active ? '<span class="badge">In use</span>' : ""}
+     <div class="sub">${c.kind === "usb" ? "USB webcam · " + esc(c.device) : "Security camera · " + esc(c.ip) + (c.password_saved ? "" : " · no password")}</div></div>
+    <div class="row"><button class="b sm" data-act="snap" title="take a new preview picture">⟳ Refresh</button><button class="b sm" data-act="live">Live</button>
+     ${c.id !== CAMS.active ? '<button class="b sm go" data-act="use">Use</button>' : ""}<button class="b sm" data-act="edit">Edit</button>
+     ${c.kind === "rtsp" ? '<button class="b sm" data-act="nvr" title="the other cameras on the same recorder (NVR)">More on this NVR…</button>' : ""}<button class="b sm" data-act="del">Delete</button></div></div>`).join("")
+    || `<div class="muted">No cameras saved yet: add one.</div>`;
+  if (snaps) CAMS.cameras.forEach(c => snap(c.id));
+}
+function snap(id) {
+  const img = document.querySelector(`[data-snap="${CSS.escape(id)}"]`); if (!img) return;
+  const note = img.nextElementSibling; note.textContent = "Getting a picture…";
+  img.onload = () => { note.textContent = "" };
+  img.onerror = () => { img.removeAttribute("src"); note.textContent = "⚠ No picture (unplugged, busy, or wrong password?)" };
+  img.src = u(`/api/cameras/${encodeURIComponent(id)}/snapshot?t=${Date.now()}`);
+}
+function camForm(c) {
+  editingCam = c ? c.id : null; $("camForm").style.display = "";
+  $("cfTitle").textContent = c ? "Edit " + c.name : "Add a camera";
+  $("cfName").value = c?.name || ""; $("cfKind").value = c?.kind || "rtsp";
+  $("cfIp").value = c?.ip || ""; $("cfUser").value = c?.user || ""; $("cfPath").value = c?.path || ""; $("cfPass").value = "";
+  $("cfPassHelp").textContent = c?.password_saved ? "A password is saved. Leave this empty to keep it." : "";
+  $("cfDev").innerHTML = CAMS.devices.map(([d, n]) => `<option value="${esc(d)}">${esc(n)} — ${esc(d)}</option>`).join("") || `<option value="">no webcam plugged in</option>`;
+  if (c?.device) $("cfDev").value = c.device;
+  kindChanged(); $("camForm").scrollIntoView({behavior: "smooth"});
+}
+function kindChanged() { const usb = $("cfKind").value === "usb"; $("cfUsb").style.display = usb ? "" : "none"; $("cfRtsp").style.display = usb ? "none" : "" }
+$("cfKind").onchange = kindChanged;
+$("camAdd").onclick = () => camForm(null);
+$("cfCancel").onclick = () => { $("camForm").style.display = "none" };
+async function saveCam(use) {
+  const body = {id: editingCam, name: $("cfName").value, kind: $("cfKind").value, ip: $("cfIp").value, user: $("cfUser").value,
+                path: $("cfPath").value, password: $("cfPass").value, device: $("cfDev").value, use};
+  try {
+    const d = await (await post("/api/cameras", body)).json();
+    $("camForm").style.display = "none"; await loadCams(false); snap(d.camera.id);
+    toast(use && d.restart ? "Saved. Restart Jim to look through it." : "Camera saved.", use && d.restart);
+  } catch (e) { toast("Not saved: " + e.message) }
+}
+$("cfSave").onclick = () => saveCam(false); $("cfSaveUse").onclick = () => saveCam(true);
+$("cams").addEventListener("click", async e => {
+  const act = e.target.dataset?.act, card = e.target.closest("[data-cam]"); if (!act || !card) return;
+  const id = card.dataset.cam, c = CAMS.cameras.find(x => x.id === id);
+  if (act === "snap") snap(id);
+  if (act === "live") camLive(c);
+  if (act === "edit") camForm(c);
+  if (act === "use") { await useFromLive("cameras", id); CAMS.cameras.forEach(x => snap(x.id)) }
+  if (act === "del" && confirm(`Delete ${c.name}?`)) { await api(`/api/cameras/${encodeURIComponent(id)}`, {method: "DELETE"}); loadCams(true) }
+  if (act === "nvr") nvrOpen(c);
+});
+// ---- the other cameras on an NVR (each channel is its own camera; same address and login)
+let nvrBase = null;
+async function nvrOpen(c) {
+  nvrBase = c; $("nvrModal").style.display = "flex"; $("nvrList").innerHTML = "";
+  $("nvrTitle").textContent = `Cameras on the recorder at ${c.ip}`; $("nvrNote").textContent = "Asking the recorder which cameras it has…";
+  try {
+    const chans = (await (await api(`/api/cameras/${encodeURIComponent(c.id)}/channels`)).json()).channels;
+    $("nvrNote").textContent = chans.length ? `${chans.length} cameras. Tick the ones to save; each becomes a camera any Jim can use.` : "No cameras found (not an NVR?).";
+    $("nvrList").innerHTML = chans.map(ch => `<div class="camcard" data-ch="${ch.channel}">
+      <div class="thumb"><img alt=""><span class="snapnote muted">waiting…</span></div>
+      <div class="field" style="margin:0"><input type="text" value="${esc(ch.name)}" ${ch.saved ? "disabled" : ""}></div>
+      <label class="sub">${ch.saved ? `✓ saved (channel ${ch.channel})` : `<input type="checkbox"> save (channel ${ch.channel})`}</label></div>`).join("");
+    for (const ch of chans) {                                     // one preview at a time: the recorder is busy enough
+      const card = document.querySelector(`#nvrList [data-ch="${ch.channel}"]`), img = card.querySelector("img"), note = card.querySelector(".snapnote");
+      note.textContent = "getting a picture…";
+      await new Promise(res => { img.onload = () => { note.textContent = ""; res() }; img.onerror = () => { note.textContent = "no picture"; res() };
+        img.src = u(`/api/cameras/${encodeURIComponent(c.id)}/channels/${ch.channel}/snapshot?t=${Date.now()}`) });
+      if ($("nvrModal").style.display === "none") break;
+    }
+  } catch (e) { $("nvrNote").textContent = "⚠ " + e.message }
+}
+$("nvrClose").onclick = () => { $("nvrModal").style.display = "none" };
+$("nvrSave").onclick = async () => {
+  const chosen = [...document.querySelectorAll("#nvrList [data-ch]")].filter(x => x.querySelector("input[type=checkbox]")?.checked)
+    .map(x => ({channel: +x.dataset.ch, name: x.querySelector("input[type=text]").value}));
+  if (!chosen.length) return toast("Tick at least one camera.");
+  try { const d = await (await post(`/api/cameras/${encodeURIComponent(nvrBase.id)}/channels`, {channels: chosen})).json();
+        $("nvrModal").style.display = "none"; await loadCams(true); toast(`${d.added.length} camera(s) saved. Use one from the Live tab or here.`) }
+  catch (e) { toast("Not saved: " + e.message) }
+};
+
+function camLive(c) {
+  const img = $("camTest");
+  $("camTestNote").textContent = `Connecting to ${c.name}…`;
+  img.onload = () => { $("camTestNote").textContent = `${c.name}: live.` };
+  img.onerror = () => { img.removeAttribute("src"); $("camTestNote").textContent = `⚠ No picture from ${c.name}.` };
+  img.src = u(`/api/camera/stream?cam=${encodeURIComponent(c.id)}&t=${Date.now()}`);
+}
+function camStop() { $("camTest").onerror = null; $("camTest").removeAttribute("src"); $("camTestNote").textContent = "Stopped." }
+$("camStop").onclick = camStop;
+loadCams(false);
+
+// ---- saved mics
+let MICS = {mics: [], active: null, devices: []}, editingMic = null;
+const toDb = v => v > 0 ? Math.round(20 * Math.log10(v / 32768)) : null;
+async function loadMics() { try { MICS = await (await api("/api/mics")).json(); paintMics() } catch (e) {} }
+function paintMics() {
+  liveSelects();
+  const desc = d => (MICS.devices.find(([x]) => x === d) || [d, d])[1] || d;
+  $("mics").innerHTML = MICS.mics.map(m => `<div class="camcard ${m.id === MICS.active ? "active" : ""}" data-mic="${esc(m.id)}">
+    <div><b>${esc(m.name)}</b>${m.id === MICS.active ? '<span class="badge">In use</span>' : ""}<div class="sub">${esc(desc(m.mic))}</div></div>
+    <div class="sub">Reacts above ${m.min_rms ? `${m.min_rms} (${toDb(m.min_rms)} dB)` : "the default"} · ${m.level_mode === "fixed" ? "fixed" : `automatic (${m.vad_ratio}× the background)`} · sentence ends after ${m.silence} s</div>
+    <div class="row">${m.id !== MICS.active ? '<button class="b sm go" data-act="use">Use</button>' : ""}<button class="b sm" data-act="test">Test 3 s</button>
+     <button class="b sm" data-act="edit">Edit</button><button class="b sm" data-act="del">Delete</button></div></div>`).join("")
+    || `<div class="muted">No mics saved yet: add one.</div>`;
+}
+function micForm(m) {
+  editingMic = m ? m.id : null; $("micForm").style.display = "";
+  $("mfTitle").textContent = m ? "Edit " + m.name : "Add a mic";
+  $("mfDev").innerHTML = MICS.devices.map(([d, n]) => `<option value="${esc(d)}">${esc(n || d)}${n ? " — " + esc(d) : ""}</option>`).join("");
+  $("mfName").value = m?.name || ""; if (m) $("mfDev").value = m.mic;
+  $("mfMode").value = m?.level_mode || "auto";
+  $("mfMin").value = m?.min_rms ?? ""; $("mfVad").value = m?.vad_ratio ?? 4; $("mfSil").value = m?.silence ?? 1.5; $("mfGain").value = m?.wled_gain ?? 16;
+  minHelp(); $("micForm").scrollIntoView({behavior: "smooth"});
+}
+function minHelp() { const v = +$("mfMin").value; $("mfMinHelp").textContent = v ? `= ${toDb(v)} dB. Jim ignores anything quieter. Use "Test 3 s" to measure.` : "automatic (300, or 500 for the LED controller's mic)" }
+$("mfMin").oninput = minHelp;
+$("micAdd").onclick = () => micForm(null);
+$("mfCancel").onclick = () => { $("micForm").style.display = "none" };
+async function saveMic(use) {
+  const num = id => $(id).value === "" ? null : +$(id).value;
+  const body = {id: editingMic, name: $("mfName").value, mic: $("mfDev").value, min_rms: num("mfMin"), level_mode: $("mfMode").value, vad_ratio: num("mfVad") ?? 4,
+                silence: num("mfSil") ?? 1.5, wled_gain: num("mfGain") ?? 16, use};
+  try { const d = await (await post("/api/mics", body)).json(); $("micForm").style.display = "none"; await loadMics();
+        toast((use || d.mic.id === MICS.active) && d.restart ? "Saved. Restart Jim to listen with it." : "Mic saved.", (use || d.mic.id === MICS.active) && d.restart) }
+  catch (e) { toast("Not saved: " + e.message) }
+}
+$("mfSave").onclick = () => saveMic(false); $("mfSaveUse").onclick = () => saveMic(true);
+$("mics").addEventListener("click", async e => {
+  const act = e.target.dataset?.act, card = e.target.closest("[data-mic]"); if (!act || !card) return;
+  const m = MICS.mics.find(x => x.id === card.dataset.mic);
+  if (act === "edit") micForm(m);
+  if (act === "use") useFromLive("mics", m.id);
+  if (act === "del" && confirm(`Delete ${m.name}?`)) { await api(`/api/mics/${encodeURIComponent(m.id)}`, {method: "DELETE"}); loadMics() }
+  if (act === "test") {
+    $("micResult").textContent = `Recording 3 s with ${m.name}…`; $("micBars").innerHTML = ""; $("micTestNote").textContent = "";
+    try {
+      const d = await (await post("/api/mic/test", {device: m.mic})).json();
+      $("micResult").innerHTML = `<b>${esc(m.name)}</b>: background ${d.noise} (${toDb(d.noise)} dB), loudest ${d.loudest} (${toDb(d.loudest)} dB).
+        A good minimum loudness is about <b>${d.suggested_min_rms}</b> (${toDb(d.suggested_min_rms)} dB). <button class="b sm" id="useMin">Use ${d.suggested_min_rms}</button>`;
+      const top = Math.max(...d.levels, 1); $("micBars").innerHTML = d.levels.map(x => `<i style="height:${Math.max(2, x / top * 100)}%"></i>`).join("");
+      $("useMin").onclick = () => { micForm(m); $("mfMin").value = d.suggested_min_rms; minHelp(); toast("Set: press Save to keep it.") };
+    } catch (err) { $("micResult").textContent = "⚠ " + err.message }
+  }
+});
+loadMics();
+
+// ---- saved speakers
+let SPK = {speakers: [], active: null, devices: [], volume_slider: [0.25, 0.125]}, editingSpk = null;
+const volReal = pos => +(SPK.volume_slider[0] + (pos - 1) * SPK.volume_slider[1]).toFixed(3);
+const volPos = v => Math.max(1, Math.min(10, Math.round((v - SPK.volume_slider[0]) / SPK.volume_slider[1]) + 1));
+async function loadSpeakers() { try { SPK = await (await api("/api/speakers")).json(); paintSpeakers() } catch (e) {} }
+function paintSpeakers() {
+  liveSelects();
+  const desc = d => (SPK.devices.find(([x]) => x === d) || [d, d])[1] || d;
+  $("spks").innerHTML = SPK.speakers.map(x => `<div class="camcard ${x.id === SPK.active ? "active" : ""}" data-spk="${esc(x.id)}">
+    <div><b>${esc(x.name)}</b>${x.id === SPK.active ? '<span class="badge">In use</span>' : ""}<div class="sub">${esc(desc(x.speaker))} · ${esc(x.speaker)}</div></div>
+    <div class="sub">Volume ${volPos(x.volume)}/10 (${x.volume}×)</div>
+    <div class="row">${x.id !== SPK.active ? '<button class="b sm go" data-act="use">Use</button>' : ""}<button class="b sm" data-act="test">▶ Test</button>
+     <button class="b sm" data-act="edit">Edit</button><button class="b sm" data-act="del">Delete</button></div></div>`).join("")
+    || `<div class="muted">No speakers saved yet: add one.</div>`;
+}
+function spkForm(x) {
+  editingSpk = x ? x.id : null; $("spkForm").style.display = "";
+  $("sfTitle").textContent = x ? "Edit " + x.name : "Add a speaker";
+  $("sfDev").innerHTML = SPK.devices.map(([d, n]) => `<option value="${esc(d)}">${esc(n || d)}${n ? " — " + esc(d) : ""}</option>`).join("");
+  $("sfName").value = x?.name || ""; if (x) $("sfDev").value = x.speaker;
+  $("sfVol").value = volPos(x?.volume ?? 1); $("sfVol").oninput();
+  $("spkForm").scrollIntoView({behavior: "smooth"});
+}
+$("sfVol").oninput = () => { $("sfVolV").innerHTML = `<b>${$("sfVol").value}</b>/10 · ${volReal(+$("sfVol").value)}×` };
+$("spkAdd").onclick = () => spkForm(null);
+$("sfCancel").onclick = () => { $("spkForm").style.display = "none" };
+async function saveSpk(use) {
+  try { const d = await (await post("/api/speakers", {id: editingSpk, name: $("sfName").value, speaker: $("sfDev").value, volume: volReal(+$("sfVol").value), use})).json();
+        $("spkForm").style.display = "none"; await loadSpeakers(); toast(d.restart ? "Saved. Restart Jim to talk through it." : "Speaker saved.", d.restart) }
+  catch (e) { toast("Not saved: " + e.message) }
+}
+$("sfSave").onclick = () => saveSpk(false); $("sfSaveUse").onclick = () => saveSpk(true);
+$("spks").addEventListener("click", async e => {
+  const act = e.target.dataset?.act, card = e.target.closest("[data-spk]"); if (!act || !card) return;
+  const x = SPK.speakers.find(y => y.id === card.dataset.spk);
+  if (act === "edit") spkForm(x);
+  if (act === "use") useFromLive("speakers", x.id);
+  if (act === "del" && confirm(`Delete ${x.name}?`)) { await api(`/api/speakers/${encodeURIComponent(x.id)}`, {method: "DELETE"}); loadSpeakers() }
+  if (act === "test") {
+    e.target.disabled = true; toast(`Playing a test line on ${x.name}…`);
+    try { await post(`/api/speakers/${encodeURIComponent(x.id)}/test`); toast(`Played on ${x.name}.`) } catch (err) { toast("⚠ " + err.message) }
+    e.target.disabled = false;
+  }
+});
+// the Live panel's volume slider: Jim's loudness, live, kept for the speaker in use
+$("spkVol").oninput = () => { $("spkVolV").textContent = `${$("spkVol").value}/10` };
+$("spkVol").onchange = async () => {
+  const v = volReal(+$("spkVol").value);
+  try { const d = await (await post("/api/volume", {volume: v})).json(); toast(`Volume ${$("spkVol").value}/10 (${d.volume}×)` + (d.live ? "." : ": saved for Jim's next start.")); loadSpeakers() }
+  catch (e) { toast("Not changed: " + e.message) }
+};
+loadSpeakers();
+
+// ---- voice preview
+async function preview(gentle) {
+  const val = n => fieldEls[n] ? readField(fieldEls[n]) : null;
+  $("pvNote").textContent = "Making the clip…";
+  try {
+    const r = await post("/api/voice/preview", {text: $("pvText").value, gentle, voice_design: val("voice_design"), gentle_voice_design: val("gentle_voice_design"),
+      pitch: val("pitch"), intonation: val("intonation"), echo: val("echo"), grit: val("grit")});
+    $("pvAudio").src = URL.createObjectURL(await r.blob()); $("pvAudio").play(); $("pvNote").textContent = gentle ? "The gentle voice (for scared kids)." : "Jim's voice.";
+  } catch (e) { $("pvNote").textContent = "⚠ " + e.message }
+}
+$("pv").onclick = () => preview(false); $("pvGentle").onclick = () => preview(true);
+
+// ---- recordings
+async function loadVisits() {
+  try {
+    const d = await (await api("/api/recordings")).json(); $("recDir").textContent = d.dir;
+    const when = id => { const m = id.match(/^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)$/); if (!m) return id;
+      const t = new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+      return t.toLocaleDateString(undefined, {weekday: "short", month: "short", day: "numeric"}) + " · " + t.toLocaleTimeString(undefined, {hour: "numeric", minute: "2-digit"}) };
+    $("visits").classList.toggle("muted", !d.visits.length);
+    $("visits").innerHTML = d.visits.length ? d.visits.map(v => `<div class="vcard" data-visit="${v.id}">
+        ${v.frame ? `<img src="${u(`/rec/${v.id}/${v.frame}`)}" alt="" loading="lazy">` : `<img alt="">`}
+        <div class="vb"><div class="when">${esc(when(v.id))}</div>
+         <div class="seen">${esc(v.seen || v.first || "—")}</div>
+         <div class="sub" style="margin-top:4px">${v.turns} ${v.turns === 1 ? "reply" : "replies"}${v.roasted ? " · costume roast" : ""}</div></div></div>`).join("")
+      : "No visits recorded yet. Turn on <b>record</b> above, save, and restart Jim.";
+  } catch (e) { $("visits").textContent = "⚠ " + e.message }
+}
+document.addEventListener("click", async e => {
+  const el = e.target.closest?.("[data-visit]"); if (!el) return;
+  const id = el.dataset.visit, v = await (await api("/api/recordings/" + id)).json();
+  $("visitCard").style.display = ""; $("visitTitle").innerHTML = `Visit ${esc(id)} <button class="b" id="delVisit" style="float:right">Delete</button>`;
+  $("visit").innerHTML = v.entries.map(x => `<div class="entry"><div>${x.frame ? `<img src="${u(`/rec/${id}/${x.frame}`)}" alt="">` : ""}</div><div>
+    <div class="kind">${esc(x.kind)} · <span class="t">${esc(x.time)}</span>${x.seconds != null ? ` <span class="t">${x.seconds} s</span>` : ""}${x.gentle ? ` <span class="t">gentle</span>` : ""}</div>
+    ${x.kind === "turn" ? `<div>🧒 ${esc(x.text)}</div>${x.kid ? `<audio controls preload="none" src="${u(`/rec/${id}/${x.kid}`)}"></audio>` : ""}<div style="margin-top:6px">🎃 ${esc(x.reply)}</div>`
+      : `<div>🎃 ${esc(x.text)}</div>${x.verdict ? `<div class="muted">${x.verdict.error ? "⚠ " + esc(x.verdict.error) : x.verdict.visible ? "saw trick-or-treaters" : "saw nobody"}</div>` : ""}`}
+    ${x.jim ? `<audio controls preload="none" src="${u(`/rec/${id}/${x.jim}`)}"></audio>` : ""}</div></div>`).join("");
+  $("delVisit").onclick = async () => { if (!confirm("Delete this visit?")) return; await api("/api/recordings/" + id, {method: "DELETE"}); $("visitCard").style.display = "none"; loadVisits() };
+  $("visitCard").scrollIntoView({behavior: "smooth"});
+});
+$("recDelAll").onclick = async () => { if (!confirm("Delete every recorded visit?")) return; await api("/api/recordings", {method: "DELETE"}); $("visitCard").style.display = "none"; loadVisits(); toast("All recordings deleted.") };
+
+let first = "live"; try { first = localStorage.getItem("jimTab") || "live" } catch (e) {}
+loadJims().then(loadSettings).then(() => show(TABS.some(([k]) => k === first) ? first : "live")).catch(e => toast("Couldn't load settings: " + e.message));
+pollLive();
+</script></body></html>

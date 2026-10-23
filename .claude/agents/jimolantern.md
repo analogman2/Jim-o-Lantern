@@ -25,12 +25,13 @@ mic ─▶ energy VAD (Mic) ─▶ Whisper ─▶ Ollama LLM (Jim) ─▶ Qwen3-
   - `SpeechServiceVoice` / `ServerVoice` / `Voice` (Kokoro): the voice.
   - `make_rumble`: the wake-up explosion.
   - `main()`: the state machine, snooze and keep-loaded logic.
-- **Settings:** this machine's addresses and options live in `jim.toml` (not committed; template
-  `jim.example.toml`). Never put IP addresses, hostnames or credentials in committed files: read
-  them from `jim.toml`.
-- **LEDs:** WLED (address in `jim.toml`). A 20×12 matrix (LEDs 0–239, row-major via WLED's 2D mapping) plus
+- **Settings:** everything lives in `~/.config/jim/config.toml` (each Jim's `[jims.<id>]`, saved `[cameras]`,
+  `[mics]`, `[speakers]`, the `[panel]` layout) and camera passwords in `~/.config/jim/secrets.toml` (mode 600).
+  `jimconfig.py` reads and writes both; layout in `config.example.toml`. Never put IP addresses, hostnames or
+  credentials in committed files, and never print `secrets.toml` or a camera's RTSP address.
+- **LEDs:** WLED (address in the Jim's `wled` setting). A 20×12 matrix (LEDs 0–239, row-major via WLED's 2D mapping) plus
   three 30-LED strips (240–329), driven with DRGB realtime UDP on port 21324.
-- **Mic:** set in `jim.toml` (currently a USB camera mic). The WLED controller's own mic also works with `--mic wled`, using our firmware patch
+- **Mic:** the Jim's `mic` setting (currently a USB camera mic). The WLED controller's own mic also works with `--mic wled`, using our firmware patch
   (`firmware/micstream.patch`, UDP 21330).
 - **Speech:** from Agentora's shared service at `http://127.0.0.1:7895` (`agentora-speech`;
   code in `~/yue2-xpu-radio/studio/speech_server.py`).
@@ -41,7 +42,9 @@ mic ─▶ energy VAD (Mic) ─▶ Whisper ─▶ Ollama LLM (Jim) ─▶ Qwen3-
     `curl -s 127.0.0.1:7890/status`).
   - **Fallback:** local `tts_server.py` in `.venv-qwentts`, and in-process Whisper.
 - **Brain:** Ollama `qwen3.5:9b` (it has vision). `--brain claude` is optional.
-- **Start:** `./start.sh` (settings from `jim.toml`).
+- **Control panel:** `./panel.sh` → http://127.0.0.1:8790 (`jim_panel.py` + `panel.html`): runs Jim as a child process, edits `config.toml`, camera/mic tests, voice preview, recordings. Forms come from `pumpkin.build_parser()` grouped in `GROUPS`.
+- **Several Jims:** `~/.config/jim/instances.json` lists them (id, name, config file, viewer port 8780, 8781, …). `pumpkin.py --config <file> --name <name>`; the panel scopes every request with `?jim=<id>`. Cameras are chosen by saved id (`camera_id`).
+- **Start:** `./start.sh` (the first Jim in `config.toml`; `--jim-id` for another).
   `--keep-loaded` keeps the models warm only while Jim runs. The 12 greetings are
   cached in `cache/greetings/`.
 
@@ -58,11 +61,11 @@ mic ─▶ energy VAD (Mic) ─▶ Whisper ─▶ Ollama LLM (Jim) ─▶ Qwen3-
 2. **The user's choices stand:** the roasting, angry, funny personality, `qwen3.5:9b`, and the
    Qwen3-TTS "jack" voice. Don't tone down the roasting or swap models or voices without asking.
 3. **No secrets in files, commands, logs or chat:**
-   - **Camera address:** comes from `$JIM_RTSP` or `~/.config/jim/rtsp`, written by
-     `set_camera.sh` with a hidden prompt. It uses the `[camera]` section of `jim.toml` for the IP,
+   - **Camera passwords:** only in `secrets.toml` (the panel, or `set_camera.sh` with a hidden prompt). Never print an
+     RTSP address: it contains the password. Older notes: the `[camera]` section of `jim.toml` held the IP,
      user and stream path. Never print the URL.
    - **Anthropic key:** only from the environment.
-   - **Pushing:** never commit `jim.toml`, `cache/`, `firmware/backup/` (it has the Wi-Fi
+   - **Pushing:** never commit anything from `~/.config/jim/`, an old `jim.toml`, `cache/`, `firmware/backup/` (it has the Wi-Fi
      name), or `.venv*`. The repo is public: scan the diff before pushing.
 4. **The GPU is shared** (RTX 4090 with the radio, Hermes and ComfyUI, through the broker).
    - **No new GPU models in Jim's process:** use the speech service.
@@ -115,7 +118,6 @@ mic ─▶ energy VAD (Mic) ─▶ Whisper ─▶ Ollama LLM (Jim) ─▶ Qwen3-
 - Report results plainly: what you tested, the numbers, and what you couldn't test (by ear, on
   real hardware, outdoors).
 - **Open items:**
-  - The camera password hasn't been entered yet: the user runs `./set_camera.sh`.
   - Camera motion as a wake-up trigger isn't built.
   - The Pi outdoor-box software (`--speaker pi`, Pi mic and camera streaming) isn't built.
   - The amp HAT model and part measurements are still needed for the box.

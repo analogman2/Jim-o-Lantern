@@ -14,8 +14,12 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 
 import numpy as np
+
+import jimconfig as J                                # config.toml + secrets.toml in ~/.config/jim/
 
 _cuda12_loaded = False
 
@@ -74,11 +78,26 @@ class Wled:
 
 # ----------------------------------------------------------------- the face
 
-SKIN = np.array([70, 18, 0], float)       # pumpkin flesh
-CANDLE = np.array([255, 130, 10], float)   # light shining through the mouth and nose
-EVIL = np.array([255, 25, 0], float)       # angry red-orange eyes
-LISTEN = np.array([255, 90, 0], float)     # eyes flare while someone talks
+# The curtain shows live data without gamma correction, so dim values look much brighter than their number:
+# the skin stays very dark and the carved features bright, or the face washes out.
+SKIN = np.array([12, 3, 0], float)        # pumpkin flesh
+CANDLE = np.array([255, 170, 30], float)   # light shining through the mouth and nose
+EVIL = np.array([255, 60, 0], float)       # angry red-orange eyes
+LISTEN = np.array([255, 120, 0], float)    # eyes flare while someone talks
 BLOOD = np.array([255, 0, 0], float)       # reveal strobe
+# each personality's face colors (same roles as above); Chris is pink and purple
+COLORS = {
+    "jim": {"skin": SKIN, "candle": CANDLE, "evil": EVIL, "listen": LISTEN, "blood": BLOOD, "strip": CANDLE},
+    "chris": {"skin": np.array([3, 0, 8], float),         # very dark indigo flesh, so the features pop
+              "candle": np.array([255, 0, 90], float),    # hot pink light through the mouth and nose
+              "evil": np.array([60, 0, 255], float),      # electric blue-violet eyes
+              "listen": np.array([140, 60, 255], float),  # eyes flare brighter violet while someone talks
+              "blood": np.array([90, 0, 255], float),     # violet reveal strobe
+              "strip": np.array([60, 0, 255], float),     # side strips alternate pink and purple
+              "reveal": "sparkle"},                       # wakes up in a shower of rainbow fairy glitter
+}
+PRIDE = [np.array(c, float) for c in ((255, 0, 0), (255, 90, 0), (255, 220, 0), (0, 255, 40), (0, 80, 255), (150, 0, 255))]
+GLITTER = [np.array(c, float) for c in ((255, 255, 255), (255, 120, 220), (255, 0, 120), (140, 60, 255))]
 REVEAL_SECONDS = 2.2                       # length of the wake-up animation (and rumble)
 
 
@@ -110,8 +129,16 @@ def mouth_pixels(level):
     return px
 
 
+def rim(pixels):
+    """The skin pixels beside a carved feature (not diagonally): kept black so it stands out like a cut edge."""
+    inside = set(pixels)
+    return sorted({(y + dy, x + dx) for y, x in pixels for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1))
+                   if 0 <= y + dy < H and 0 <= x + dx < W and (y + dy, x + dx) not in inside})
+
+
 EYES = eye_pixels()
 MOUTHS = [mouth_pixels(i) for i in range(4)]
+RIMS = [rim(EYES + NOSE + m) for m in MOUTHS]   # one per mouth opening
 
 
 class Face(threading.Thread):
@@ -121,9 +148,13 @@ class Face(threading.Thread):
     States: dark (all off) -> eyes (only the eyes glow) -> reveal (scary wake-up
     animation) -> idle / listening / thinking / talking (full pumpkin)."""
 
-    def __init__(self, wled):
+    def __init__(self, wled, colors=None):
         super().__init__(daemon=True)
         self.wled = wled
+        c = colors or COLORS["jim"]
+        self.skin, self.candle, self.evil, self.listen, self.blood = (c[k] for k in ("skin", "candle", "evil", "listen", "blood"))
+        self.reveal_style = c.get("reveal", "scary")
+        self.strip = np.array([self.candle if i % 2 == 0 else c["strip"] for i in range(EXTRA_LEDS)])  # side strips
         self.state = "dark"
         self.reveal_start = 0.0
         self.mouth_events = []  # [(play_time, level 0..1)], in time order
@@ -153,44 +184,88 @@ class Face(threading.Thread):
         """Just the eyes, glowing and slowly pulsing in the dark."""
         frame = np.zeros((H, W, 3))
         k = 0.35 + 0.2 * np.sin(now * 2.2) + 0.1 * random.random()
-        self.draw(frame, EYES, EVIL * k)
+        self.draw(frame, EYES, self.evil * k)
         return frame, np.zeros((EXTRA_LEDS, 3))
 
     def reveal_frame(self, t, flicker):
+        if self.reveal_style == "sparkle":
+            return self.sparkle_reveal_frame(t, flicker)
+        return self.scary_reveal_frame(t, flicker)
+
+    def sparkle_reveal_frame(self, t, flicker):
+        """Fairy dust: glitter twinkles in, a rainbow of sparkles sweeps across, then the face fades in through it."""
+        frame = np.zeros((H, W, 3))
+        extra = np.zeros((EXTRA_LEDS, 3))
+        if t < 0.6:                       # twinkles appear, more and more
+            density = 0.04 + 0.25 * t
+        elif t < 1.3:                     # a diagonal rainbow band of glitter sweeps left to right
+            density = 0.06
+            pos = (t - 0.6) / 0.7 * (W + H) - H
+            for y in range(H):
+                for x in range(W):
+                    d = abs(x + (H - 1 - y) * 0.6 - pos)
+                    if d < 3 and random.random() < 0.85 - 0.25 * d:
+                        frame[y, x] = PRIDE[int(x + y + t * 20) % len(PRIDE)] * (1 - d / 3.5)
+            k = (t - 0.6) / 0.7           # rainbow chases up the side strips
+            lit = int(k * EXTRA_LEDS)
+            for i in range(lit):
+                extra[i] = PRIDE[(i // 3 + int(t * 12)) % len(PRIDE)] * (0.4 + 0.6 * random.random())
+        else:                             # the face fades in through the last of the glitter
+            k = min(1.0, (t - 1.3) / (REVEAL_SECONDS - 1.3))
+            density = 0.12 * (1 - k)
+            frame[:] = self.skin * k * flicker
+            self.draw(frame, RIMS[1], np.zeros(3))
+            self.draw(frame, EYES, self.evil * k)
+            self.draw(frame, NOSE, self.candle * k * 0.8)
+            self.draw(frame, MOUTHS[1], self.candle * k)
+            extra[:] = self.strip * (0.25 + 0.75 * (1 - k))
+        for y in range(H):                # glitter: white, pink and violet pinpricks
+            for x in range(W):
+                if random.random() < density:
+                    frame[y, x] = GLITTER[random.randrange(len(GLITTER))] * (0.5 + 0.5 * random.random())
+        for i in range(EXTRA_LEDS):
+            if random.random() < density:
+                extra[i] = GLITTER[random.randrange(len(GLITTER))]
+        return frame, extra
+
+    def scary_reveal_frame(self, t, flicker):
         """Eyes flare, the whole pumpkin strobes blood red, then settles in."""
         frame = np.zeros((H, W, 3))
         extra = np.zeros((EXTRA_LEDS, 3))
         if t < 0.6:                       # eyes sputter and flare up
             if random.random() < 0.3 + t:
-                self.draw(frame, EYES, EVIL * min(1.0, 0.4 + t * 1.5))
+                self.draw(frame, EYES, self.evil * min(1.0, 0.4 + t * 1.5))
         elif t < 1.3:                     # full-curtain red strobe, mouth gaping
             if int(t * 16) % 2 == 0:
-                frame[:] = BLOOD * 0.9
-                extra[:] = BLOOD
+                frame[:] = self.blood * 0.9
+                extra[:] = self.blood
             self.draw(frame, EYES, np.array([255, 255, 200.0]))
             self.draw(frame, MOUTHS[3], np.array([255, 255, 200.0]))
         else:                             # flames settle into the full pumpkin
             k = min(1.0, (t - 1.3) / (REVEAL_SECONDS - 1.3))
-            frame[:] = SKIN * (2.5 - 1.5 * k) * flicker
-            self.draw(frame, EYES, EVIL * flicker)
-            self.draw(frame, NOSE, CANDLE * flicker * 0.8)
-            self.draw(frame, MOUTHS[3 if k < 0.6 else 1], CANDLE * flicker)
-            extra[:] = CANDLE * (1.0 - 0.6 * k) * flicker
+            frame[:] = self.skin * (2.5 - 1.5 * k) * flicker
+            self.draw(frame, RIMS[3 if k < 0.6 else 1], np.zeros(3))
+            self.draw(frame, EYES, self.evil * flicker)
+            self.draw(frame, NOSE, self.candle * flicker * 0.8)
+            self.draw(frame, MOUTHS[3 if k < 0.6 else 1], self.candle * flicker)
+            extra[:] = self.strip * (1.0 - 0.6 * k) * flicker
         return frame, extra
 
     def awake_frame(self, now, flicker, smooth):
-        frame = np.tile(SKIN * (0.85 + 0.15 * flicker), (H, W, 1))
-        glow = CANDLE * flicker
+        frame = np.tile(self.skin * (0.85 + 0.15 * flicker), (H, W, 1))
+        glow = self.candle * (0.9 + 0.1 * flicker)    # the carved features barely dim with the flicker
         if self.state == "listening":
-            eye_col = LISTEN
+            eye_col = self.listen
         elif self.state == "thinking":   # eyes smolder while it thinks of an insult
-            eye_col = EVIL * (0.45 + 0.4 * (0.5 + 0.5 * np.sin(now * 9)))
+            eye_col = self.evil * (0.45 + 0.4 * (0.5 + 0.5 * np.sin(now * 9)))
         else:
-            eye_col = EVIL * (0.8 + 0.2 * flicker)
+            eye_col = self.evil * (0.92 + 0.08 * flicker)
+        mouth = min(3, int(round(smooth * 3)))
+        self.draw(frame, RIMS[mouth], np.zeros(3))
         self.draw(frame, EYES, eye_col)
         self.draw(frame, NOSE, glow * 0.8)
-        self.draw(frame, MOUTHS[min(3, int(round(smooth * 3)))], glow)
-        extra = np.tile(CANDLE * (0.25 + 0.5 * flicker * (0.5 + smooth)), (EXTRA_LEDS, 1))
+        self.draw(frame, MOUTHS[mouth], glow)
+        extra = self.strip * (0.25 + 0.5 * flicker * (0.5 + smooth))
         return frame, extra
 
     def run(self):
@@ -225,61 +300,127 @@ WLED_MIC_PORT = 21330   # patched WLED firmware streams raw mic samples from her
 def alsa_source(device):
     """Yield int16 sample blocks from an ALSA capture device. Returns (rate, generator)."""
     def gen():
-        proc = subprocess.Popen(["arecord", "-q", "-D", device, "-f", "S16_LE",
-                                 "-r", str(MIC_RATE), "-c", "1", "-t", "raw"],
-                                stdout=subprocess.PIPE)
-        while len(data := proc.stdout.read(960)) == 960:
-            yield np.frombuffer(data, np.int16)
-        print("[mic] arecord stopped", file=sys.stderr)
+        # a USB mic can drop off (a hub resets, a cable gets bumped): keep trying until it's back
+        lost = False
+        while True:
+            proc = subprocess.Popen(["arecord", "-q", "-D", device, "-f", "S16_LE",
+                                     "-r", str(MIC_RATE), "-c", "1", "-t", "raw"],
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            got = 0
+            try:
+                while len(data := proc.stdout.read(960)) == 960:
+                    if lost and not got:
+                        print("[mic] the microphone is back", file=sys.stderr, flush=True)
+                        lost = False
+                    got += 1
+                    yield np.frombuffer(data, np.int16)
+            finally:                                 # also when Jim switches to another mic
+                proc.kill(); proc.wait()
+            if not lost:
+                print(f"[mic] lost the microphone ({device}); retrying every 3 s", file=sys.stderr, flush=True)
+                lost = True
+            time.sleep(3)
     return MIC_RATE, gen()
+
+
+def saved_camera_url(cam_id):
+    """A saved camera (config.toml): its USB device or its RTSP address with the password (secrets.toml); None if unknown."""
+    url = J.device_url(cam_id)
+    if not url:
+        print(f"[camera] no saved camera '{cam_id}' (control panel: Camera tab): Jim is blind", file=sys.stderr)
+    return url
+
+
+def camera_audio_url(cam_id):
+    """The RTSP address of a saved security camera, for its built-in microphone (mic = "camera:<id>")."""
+    c = J.camera(cam_id)
+    if not c or c.get("kind") != "rtsp":
+        sys.exit(f"No saved security camera '{cam_id}' for the microphone (control panel: Camera tab).")
+    return J.camera_url(c)
+
+
+def rtsp_audio_source(url, name):
+    """Yield int16 sample blocks (16 kHz mono) from a network camera's microphone: only its audio track is fetched.
+    Reconnects when the camera drops out. Never prints the address (it holds the password)."""
+    def gen():
+        lost = False
+        while True:
+            proc = subprocess.Popen(["ffmpeg", "-loglevel", "quiet", "-rtsp_transport", "tcp", "-allowed_media_types", "audio",
+                                     "-fflags", "nobuffer", "-flags", "low_delay", "-i", url, "-vn", "-ac", "1",
+                                     "-ar", str(MIC_RATE), "-f", "s16le", "-"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            got = 0
+            try:
+                while len(data := proc.stdout.read(960)) == 960:
+                    if lost and not got:
+                        print(f"[mic] {name}'s microphone is back", file=sys.stderr, flush=True)
+                        lost = False
+                    got += 1
+                    yield np.frombuffer(data, np.int16)
+            finally:
+                proc.kill(); proc.wait()
+            if not lost:
+                print(f"[mic] lost {name}'s microphone; retrying every 3 s", file=sys.stderr, flush=True)
+                lost = True
+            time.sleep(3)
+    return MIC_RATE, gen()
+
+
+WLED_MIC_RATE = 22050                                 # what the patched firmware streams (see README)
 
 
 def wled_source(host, gain=16):
     """Yield int16 sample blocks streamed by the patched WLED firmware.
     We send a "PMIC" subscribe packet every second; WLED streams to us while
-    those keep arriving. Returns (rate, generator)."""
+    those keep arriving. Returns (rate, generator). Never blocks: until the controller answers, Jim simply hears
+    nothing (a second Jim's controller may not have the patched firmware yet)."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("", 0))
     sock.settimeout(0.5)
+    stop = threading.Event()
 
     def subscribe():
-        while True:
-            sock.sendto(b"PMIC" + bytes([gain]), (host, WLED_MIC_PORT))
+        while not stop.is_set():
+            try:
+                sock.sendto(b"PMIC" + bytes([gain]), (host, WLED_MIC_PORT))
+            except OSError:
+                pass
             time.sleep(1)
 
     threading.Thread(target=subscribe, daemon=True).start()
-    rate = None
-    while rate is None:  # wait for the first packet to learn the sample rate
-        try:
-            pkt = sock.recv(2048)
-        except socket.timeout:
-            print(f"[mic] waiting for audio from WLED at {host}:{WLED_MIC_PORT} "
-                  "(is the patched firmware installed and AudioReactive enabled?)",
-                  file=sys.stderr)
-            time.sleep(2)
-            continue
-        if pkt[:4] == b"PMA1":
-            rate = int.from_bytes(pkt[8:12], "little")
 
     def gen():
-        last_seq = None
-        while True:
-            try:
-                pkt = sock.recv(2048)
-            except socket.timeout:
-                continue
-            if pkt[:4] != b"PMA1":
-                continue
-            seq = int.from_bytes(pkt[4:8], "little")
-            n = int.from_bytes(pkt[12:14], "little")
-            if last_seq is not None and seq != last_seq + 1:
-                lost = (seq - last_seq - 1) & 0xFFFFFFFF
-                if 0 < lost < 50:
-                    yield np.zeros(n * lost, np.int16)  # keep timing across dropped packets
-            last_seq = seq
-            yield np.frombuffer(pkt[14:14 + 2 * n], np.int16)
+        last_seq, quiet_since, said = None, time.time(), None
+        try:
+            while True:
+                try:
+                    pkt = sock.recv(2048)
+                except socket.timeout:
+                    if said != "waiting" and time.time() - quiet_since > 3:
+                        print(f"[mic] waiting for audio from WLED at {host}:{WLED_MIC_PORT} "
+                              "(is the patched firmware installed and AudioReactive enabled?)", file=sys.stderr, flush=True)
+                        said = "waiting"
+                    continue
+                if pkt[:4] != b"PMA1":
+                    continue
+                quiet_since = time.time()
+                if said != "streaming":
+                    rate = int.from_bytes(pkt[8:12], "little")
+                    print(f"[mic] audio from WLED at {host}" + (f" (at {rate} Hz, expected {WLED_MIC_RATE})" if rate != WLED_MIC_RATE else ""),
+                          file=sys.stderr, flush=True)
+                    said = "streaming"
+                seq = int.from_bytes(pkt[4:8], "little")
+                n = int.from_bytes(pkt[12:14], "little")
+                if last_seq is not None and seq != last_seq + 1:
+                    lost = (seq - last_seq - 1) & 0xFFFFFFFF
+                    if 0 < lost < 50:
+                        yield np.zeros(n * lost, np.int16)  # keep timing across dropped packets
+                last_seq = seq
+                yield np.frombuffer(pkt[14:14 + 2 * n], np.int16)
+        finally:                                     # Jim switched to another mic
+            stop.set()
+            sock.close()
 
-    return rate, gen()
+    return WLED_MIC_RATE, gen()
 
 
 class Mic(threading.Thread):
@@ -297,23 +438,58 @@ class Mic(threading.Thread):
         self.muted = threading.Event()
         self.in_speech = False  # someone is talking right now
         self.debug_levels = False
+        self.level = self.thresh = 0.0  # latest loudness and the current trigger level (for the panel)
+        self.fixed = False               # --level-mode fixed: the trigger level is min_rms, whatever the background
+        self.level_t = 0.0               # when the last sound frame arrived (a lost mic stops updating it)
+        self.speech_end = 0.0            # when the latest utterance's last loud frame was heard (end-to-end timing)
+        self.on_warn = lambda text: None # set later: a problem worth showing in the control panel
+        self.capped = 0                  # sentences in a row that never went quiet
 
-    def mute(self):
+    def mute(self, why="self"):
+        self.holds = getattr(self, "holds", set()) | {why}
         self.muted.set()
 
-    def unmute(self):
-        # Drop anything heard while the pumpkin itself was talking.
+    def unmute(self, why="self"):
+        # Drop anything heard while a pumpkin was talking; listen again once nobody is.
+        self.holds = getattr(self, "holds", set()) - {why}
         while not self.utterances.empty():
             self.utterances.get_nowait()
-        self.muted.clear()
+        if not self.holds:
+            self.muted.clear()
+
+    def set_source(self, source):
+        """Listen through another microphone without restarting Jim (picked up within one block)."""
+        self.pending = source
 
     def frames(self):
-        buf = np.zeros(0, np.float32)
-        for block in self.blocks:
-            buf = np.concatenate([buf, block.astype(np.float32)])
-            while len(buf) >= self.frame:
-                f, buf = buf[:self.frame], buf[self.frame:]
-                yield f - f.mean()  # strip DC offset (PDM mics often have one)
+        self.pending = None
+        while True:
+            q, blocks, stop = queue.Queue(maxsize=100), self.blocks, threading.Event()
+
+            def pump(blocks=blocks, q=q, stop=stop):
+                # read the source in its own thread, so a switch never waits on a mic that has gone quiet or away
+                try:
+                    for block in blocks:
+                        if stop.is_set():
+                            break
+                        q.put(block)
+                finally:
+                    blocks.close()                   # the old mic's recorder stops and frees the device
+            threading.Thread(target=pump, daemon=True).start()
+            buf = np.zeros(0, np.float32)
+            while not self.pending:
+                try:
+                    block = q.get(timeout=0.2)
+                except queue.Empty:
+                    continue
+                buf = np.concatenate([buf, block.astype(np.float32)])
+                while len(buf) >= self.frame:
+                    f, buf = buf[:self.frame], buf[self.frame:]
+                    yield f - f.mean()  # strip DC offset (PDM mics often have one)
+            stop.set()
+            (self.rate, self.blocks), self.pending = self.pending, None
+            self.frame = int(self.rate * 0.03)
+            self.level_t = 0.0
 
     def to_16k(self, audio):
         if self.rate == MIC_RATE:
@@ -330,11 +506,14 @@ class Mic(threading.Thread):
         last_loud, onset_frames = 0.0, 0
         for pcm in self.frames():
             self.in_speech = in_speech
-            if self.muted.is_set():
+            rms = float(np.sqrt(np.mean(pcm ** 2)))
+            if self.muted.is_set():                 # Jim is talking: don't listen, but keep the panel's meter alive
+                self.level, self.level_t = max(rms, self.level * 0.85), time.time()
                 preroll, speech, loud_run, in_speech = [], [], 0, False
                 continue
-            rms = float(np.sqrt(np.mean(pcm ** 2)))
-            thresh = max(floor * self.vad_ratio, self.min_rms)
+            thresh = self.min_rms if self.fixed else max(floor * self.vad_ratio, self.min_rms)
+            self.level, self.thresh = max(rms, self.level * 0.85), thresh   # a peak meter that falls back
+            self.level_t = time.time()
             loud = rms > thresh
             if loud:
                 now = time.time()
@@ -365,7 +544,17 @@ class Mic(threading.Thread):
                     in_speech, loud_run, preroll = False, 0, []
                     if dur > 15:  # never went quiet: background got louder, so re-learn it
                         floor = float(np.percentile([np.sqrt(np.mean(f ** 2)) for f in speech], 20))
+                        self.capped += 1
+                        if self.fixed and self.capped == 2:   # a fixed level the background is above: every turn waits 15 s
+                            msg = (f"[mic] the background ({floor:.0f}) is above Jim's fixed reaction level ({self.min_rms:.0f}), "
+                                   f"so every sentence runs to the 15 s limit and he answers very late. Raise the level "
+                                   f"(drag the line above the background) or set the mic to automatic.")
+                            print(msg, file=sys.stderr, flush=True)
+                            self.on_warn("⚠️ " + msg[6:])
+                    else:
+                        self.capped = 0
                     if dur > 0.5:
+                        self.speech_end = last_loud
                         audio = np.concatenate(speech)
                         audio = audio / max(np.max(np.abs(audio)), 1.0) * 0.9  # normalize
                         self.utterances.put(self.to_16k(audio))
@@ -373,24 +562,11 @@ class Mic(threading.Thread):
 
 # ------------------------------------------------------------------- camera
 
-CAMERA_FILE = os.path.expanduser("~/.config/jim/rtsp")  # written by set_camera.sh
-
-
-def camera_url():
-    """The camera's RTSP address: $JIM_RTSP, else ~/.config/jim/rtsp (kept out of the repo
-    because it contains the camera password)."""
-    if os.environ.get("JIM_RTSP"):
-        return os.environ["JIM_RTSP"].strip()
-    try:
-        with open(CAMERA_FILE) as f:
-            return f.read().strip() or None
-    except OSError:
-        return None
-
-
 class Camera(threading.Thread):
     """Keeps the latest frame of an RTSP camera in memory as a small JPEG, so Jim can see
     the costumes. Frames are never written to disk."""
+
+    MOTION_W, MOTION_H = 64, 36                      # the tiny grey picture movement is measured on
 
     def __init__(self, url, crop=None, width=768, fps=2):
         super().__init__(daemon=True)
@@ -398,6 +574,19 @@ class Camera(threading.Thread):
         self.crop = crop  # (x, y, w, h) as fractions of the frame, or None
         self.frame, self.frame_time = None, 0.0
         self.lock = threading.Lock()
+        self.times, self.reconnects = [], 0          # for the control panel's network card
+        # movement: on_motion() is called when enough of the watched region changes between frames
+        self.on_motion, self.motion_area, self.motion_region = None, 1.5, None
+        self.motion_level, self.prev_small, self.last_motion = 0.0, None, 0.0
+
+    def stats(self):
+        now = time.time()
+        with self.lock:
+            recent = [t for t in self.times if now - t < 5]
+            age = now - self.frame_time if self.frame_time else None
+        return {"fps": round(len(recent) / 5, 1), "age_s": round(age, 1) if age is not None else None,
+                "motion": round(self.motion_level, 1),
+                "reconnects": self.reconnects, "kind": "usb" if (self.url or "").startswith("/dev/") else "rtsp" if self.url else "none"}
 
     def latest(self, max_age=3.0):
         """The newest frame (JPEG bytes) if it's fresh, else None."""
@@ -406,16 +595,71 @@ class Camera(threading.Thread):
                 return self.frame
         return None
 
+    def motion_score(self, small):
+        """Percent of the watched region that changed since the last frame (0 for a lighting change: porch light,
+        headlights or the camera switching to night mode change most of the picture at once)."""
+        prev, self.prev_small = self.prev_small, small
+        if prev is None:
+            return 0.0
+        diff = np.abs(small.astype(np.int16) - prev.astype(np.int16))
+        if self.motion_region:
+            x, y, w, h = self.motion_region
+            r0, c0 = int(y * self.MOTION_H), int(x * self.MOTION_W)
+            diff = diff[r0:max(r0 + 1, int((y + h) * self.MOTION_H)), c0:max(c0 + 1, int((x + w) * self.MOTION_W))]
+        changed = float((diff > 22).mean()) * 100
+        return 0.0 if changed > 45 else changed
+
+    def watch_motion(self, pipe):
+        """Reads the tiny grey frames of one ffmpeg run; calls on_motion (at most once a second) when they move."""
+        n = self.MOTION_W * self.MOTION_H
+        self.prev_small = None
+        with pipe:
+            while True:
+                raw = b""
+                while len(raw) < n:
+                    chunk = pipe.read(n - len(raw))
+                    if not chunk:
+                        return                        # ffmpeg stopped (reconnect or camera switch)
+                    raw += chunk
+                self.motion_level = self.motion_score(np.frombuffer(raw, np.uint8).reshape(self.MOTION_H, self.MOTION_W))
+                if self.on_motion and self.motion_level >= self.motion_area and time.time() - self.last_motion > 1:
+                    self.last_motion = time.time()
+                    self.on_motion()
+
+    def set_url(self, url, crop=None):
+        """Look through another camera (None = blind) without restarting Jim."""
+        self.url, self.crop = url, crop
+        with self.lock:
+            self.frame, self.frame_time, self.times = None, 0.0, []
+        proc = getattr(self, "proc", None)
+        if proc and proc.poll() is None:
+            proc.kill()                              # the loop below starts the new feed
+
     def run(self):
-        vf = f"fps={self.fps},scale={self.width}:-2"
-        if self.crop:
-            x, y, w, h = self.crop
-            vf = f"crop=iw*{w}:ih*{h}:iw*{x}:ih*{y}," + vf
-        cmd = ["ffmpeg", "-loglevel", "error", "-rtsp_transport", "tcp", "-i", self.url,
-               "-an", "-vf", vf, "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "4", "-"]
         warned = False
         while True:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            url = self.url
+            if not url:
+                time.sleep(0.5)
+                continue
+            crop = ""
+            if self.crop:
+                x, y, w, h = self.crop
+                crop = f"crop=iw*{w}:ih*{h}:iw*{x}:ih*{y},"
+            if url.startswith("/dev/"):              # a USB webcam
+                src = ["-f", "v4l2", "-input_format", "mjpeg", "-video_size", "848x480", "-i", url]
+            else:                                    # the security camera (RTSP)
+                src = ["-rtsp_transport", "tcp", "-i", url]
+            # one ffmpeg, two outputs: the JPEGs Jim looks at, and a tiny grey picture for spotting movement
+            small_r, small_w = os.pipe()
+            graph = (f"[0:v]{crop}fps={self.fps},split=2[a][b];[a]scale={self.width}:-2[big];"
+                     f"[b]scale={self.MOTION_W}:{self.MOTION_H},format=gray[small]")
+            self.proc = proc = subprocess.Popen(["ffmpeg", "-loglevel", "error", *src, "-an", "-filter_complex", graph,
+                                                 "-map", "[big]", "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "4", "pipe:1",
+                                                 "-map", "[small]", "-f", "rawvideo", f"pipe:{small_w}"],
+                                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, pass_fds=(small_w,))
+            os.close(small_w)
+            threading.Thread(target=self.watch_motion, args=(os.fdopen(small_r, "rb", buffering=0),), daemon=True).start()
             buf = b""
             while chunk := proc.stdout.read(65536):
                 buf += chunk
@@ -426,15 +670,192 @@ class Camera(threading.Thread):
                         break
                     with self.lock:
                         self.frame, self.frame_time = buf[start:end + 2], time.time()
+                        self.times = self.times[-20:] + [self.frame_time]
                     if warned:
                         print("[camera] connected again")
                         warned = False
                     buf = buf[end + 2:]
             proc.wait()
+            if url != self.url:                      # switched on purpose: start the new one at once
+                continue
+            self.reconnects += 1
             if not warned:  # never print the URL: it contains the password
                 print("[camera] lost the feed; retrying every 5 s", file=sys.stderr)
                 warned = True
             time.sleep(5)
+
+
+class Recorder:
+    """With --record: each visit (wake-up to sleep) goes in its own folder under --record-dir: visit.json (what
+    happened, in order) plus the camera frames, each kid's words as heard (16 kHz WAV) and Jim's replies as played.
+    The control panel plays them back. Old visits are deleted after --record-keep-days."""
+
+    def __init__(self, root, keep_days):
+        self.root, self.keep_days = root, keep_days
+        self.dir, self.entries, self.lock = None, [], threading.Lock()
+        os.makedirs(root, exist_ok=True)
+        self.prune()
+
+    def prune(self):
+        if self.keep_days <= 0:
+            return
+        import shutil
+        cutoff = time.time() - self.keep_days * 86400
+        for name in os.listdir(self.root):
+            d = os.path.join(self.root, name)
+            if os.path.isdir(d) and os.path.getmtime(d) < cutoff:
+                shutil.rmtree(d, ignore_errors=True)
+
+    def add(self, kind, text="", frame=None, kid=None, jim=None, jim_rate=24000, **info):
+        with self.lock:
+            if self.dir is None:
+                self.prune()
+                self.dir = os.path.join(self.root, time.strftime("%Y%m%d-%H%M%S"))
+                os.makedirs(self.dir, exist_ok=True)
+                self.entries = []
+            n = len(self.entries) + 1
+            e = {"n": n, "time": time.strftime("%H:%M:%S"), "kind": kind, "text": text, **info}
+            for key, data, ext in (("frame", frame, "jpg"), ("kid", kid, "wav"), ("jim", jim, "wav")):
+                if data is None or len(data) == 0:
+                    continue
+                name = f"{n:02d}-{key}.{ext}"
+                with open(os.path.join(self.dir, name), "wb") as f:
+                    f.write(data if key == "frame" else wav_bytes(data, MIC_RATE if key == "kid" else jim_rate))
+                e[key] = name
+            self.entries.append(e)
+            tmp = os.path.join(self.dir, "visit.json.tmp")
+            with open(tmp, "w") as f:
+                json.dump({"started": os.path.basename(self.dir), "entries": self.entries}, f, indent=1)
+            os.replace(tmp, os.path.join(self.dir, "visit.json"))
+
+    def end(self):
+        with self.lock:
+            self.dir = None
+
+
+class Watch:
+    """A page on this PC only (http://127.0.0.1:<port>) to watch what Jim sees and decides: the live camera, the
+    exact frame he last judged with the model's verdict, and a log of wake-ups and replies. Frames stay in memory."""
+
+    PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Jim's eyes</title><style>
+body{margin:0;padding:16px;background:#111;color:#eee;font:15px system-ui,sans-serif}
+h1{font-size:20px;margin:0 0 12px}h2{font-size:15px;margin:0 0 6px;color:#f80}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+img{width:100%;border-radius:8px;background:#222;display:block;min-height:120px}
+img:not([src]){display:none}.empty{color:#888;padding:40px 0;text-align:center}
+.card{background:#1b1b1b;border-radius:10px;padding:12px}
+.v{font-weight:600;margin:8px 0}.yes{color:#6d6}.no{color:#aaa}.err{color:#f66}
+ul{list-style:none;padding:0;margin:0}li{padding:6px 0;border-top:1px solid #2a2a2a}
+.t{color:#888;font-size:12px;margin-right:6px}#state{color:#f80}
+</style></head><body><h1>🎃 Jim's eyes <span id="state"></span></h1><div class="grid">
+<div class="card"><h2>Live camera</h2><img id="live" alt="no camera frame yet"></div>
+<div class="card"><h2>Last frame Jim judged</h2><img id="judged" alt=""><div id="none" class="empty">Nothing judged yet: wake Jim up</div><div id="verdict" class="v"></div></div>
+</div><div class="card" style="margin-top:16px"><h2>What happened</h2><ul id="log"></ul></div>
+<script>
+const $=id=>document.getElementById(id),esc=s=>String(s??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"})[c]);
+let judged=0;setInterval(()=>{$("live").src="live.jpg?"+Date.now()},500);
+async function poll(){try{const d=await (await fetch("events.json")).json();$("state").textContent="· "+d.state;
+if(d.judged_at&&d.judged_at!==judged){judged=d.judged_at;$("judged").src="judged.jpg?"+judged;$("none")?.remove()}
+const v=d.verdict;$("verdict").className="v "+(v?(v.error?"err":v.visible?"yes":"no"):"");
+$("verdict").textContent=v?(v.error?"⚠ "+v.error:(v.visible?"Sees trick-or-treaters":"Sees nobody")+(v.seconds!=null?" · "+v.seconds+" s":"")):"";
+$("log").innerHTML=d.events.slice().reverse().map(e=>`<li><span class="t">${esc(e.time)}</span>${esc(e.text)}</li>`).join("")}catch(e){}}
+setInterval(poll,1000);poll();
+</script></body></html>"""
+
+    def __init__(self, port, camera, state):
+        import collections
+        self.camera, self.state = camera, state
+        self.events = collections.deque(maxlen=60)
+        self.judged, self.judged_at, self.verdict = None, 0.0, None
+        self.extra = lambda: {}                      # set later: mic levels
+        self.on_snooze = None                        # set later: POST /snooze {"seconds"}
+        self.on_min_rms = None                       # set later: POST /min_rms {"min_rms"}: Jim's trigger level, live
+        self.on_volume = None                        # set later: POST /volume {"volume"}: Jim's loudness, live
+        self.on_reload = None                        # set later: POST /reload: switch camera/mic/speaker to jim.toml's
+        self.on_duo = None                           # set later: POST /duo/{quiet,said,wake} from a partner Jim; /hear, /wake
+        self.port = port
+        self.lock = threading.Lock()
+        threading.Thread(target=self.serve, args=(port,), daemon=True).start()
+
+    def event(self, text):
+        with self.lock:
+            self.events.append({"time": time.strftime("%H:%M:%S"), "text": text})
+
+    def judge(self, frame, verdict):
+        with self.lock:
+            if frame:
+                self.judged, self.judged_at = frame, time.time()
+            self.verdict = verdict
+
+    def serve(self, port):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        watch = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def send(self, body, ctype):
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def local(self):
+                # only pages from this PC (a website can't reach in by pointing a domain name at 127.0.0.1)
+                return self.headers.get("Host", "") in (f"127.0.0.1:{watch.port}", f"localhost:{watch.port}")
+
+            def do_POST(self):
+                # the control panel's buttons; the custom header keeps other websites' forms out
+                if self.path in ("/duo/quiet", "/duo/said", "/duo/wake", "/hear", "/wake") and self.local() \
+                        and self.headers.get("X-Jim-Panel") == "1" and watch.on_duo:
+                    n = int(self.headers.get("Content-Length") or 0)
+                    watch.on_duo(self.path, json.loads(self.rfile.read(n) or b"{}") if n else {})
+                    return self.send(b'{"ok": true}', "application/json")
+                handler = {"/snooze": watch.on_snooze, "/min_rms": watch.on_min_rms, "/volume": watch.on_volume,
+                           "/reload": watch.on_reload}.get(self.path)
+                if not self.local() or self.headers.get("X-Jim-Panel") != "1" or not handler:
+                    self.send_response(403); self.end_headers(); return
+                n = int(self.headers.get("Content-Length") or 0)
+                b = json.loads(self.rfile.read(n) or b"{}") if n else {}
+                if self.path == "/reload":
+                    return self.send(json.dumps({"changed": handler()}).encode(), "application/json")
+                if self.path == "/snooze":
+                    handler(float(b.get("seconds") or 10))
+                elif self.path == "/volume":
+                    handler(max(0.05, min(1.5, float(b["volume"]))))
+                else:
+                    handler(max(20.0, min(30000.0, float(b["min_rms"]))), b.get("fixed"))
+                self.send(b'{"ok": true}', "application/json")
+
+            def do_GET(self):
+                if not self.local():
+                    self.send_response(403); self.end_headers(); return
+                path = self.path.split("?")[0]
+                if path == "/":
+                    return self.send(watch.PAGE.encode(), "text/html; charset=utf-8")
+                if path in ("/live.jpg", "/judged.jpg"):
+                    frame = (watch.camera.latest(max_age=10) if watch.camera else None) if path == "/live.jpg" else watch.judged
+                    if not frame:
+                        self.send_response(404); self.end_headers(); return
+                    return self.send(frame, "image/jpeg")
+                if path == "/mic.json":                  # polled several times a second by the panel's meter
+                    x = watch.extra()
+                    return self.send(json.dumps({**(x.get("mic") or {}), "speaker": x.get("speaker")}).encode(), "application/json")
+                if path == "/events.json":
+                    with watch.lock:
+                        d = {"state": watch.state(), "events": list(watch.events), "verdict": watch.verdict,
+                             "judged_at": watch.judged_at, **watch.extra()}
+                    return self.send(json.dumps(d).encode(), "application/json")
+                self.send_response(404); self.end_headers()
+
+        try:
+            ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+        except OSError as e:
+            print(f"[watch] couldn't open the viewer on port {port}: {e}", file=sys.stderr)
 
 
 VISION_RULES = """
@@ -465,14 +886,19 @@ def clean_greeting(text):
 GREETING_SCHEMA = {
     "type": "object",
     "properties": {
+        "seen": {"type": "string"},
         "trick_or_treaters_visible": {"type": "boolean"},
+        "children_visible": {"type": "boolean"},
         "greeting": {"type": "string"},
     },
-    "required": ["trick_or_treaters_visible", "greeting"],
+    "required": ["seen", "trick_or_treaters_visible", "children_visible", "greeting"],
 }
 VISION_GREETING_ASK_JSON = (
-    "[You just woke up. Attached is what you see in front of you right now. First decide "
-    "whether real people (trick-or-treaters) are clearly visible. If they are, write a greeting "
+    "[You just woke up. Attached is what you see in front of you right now. First, in \"seen\", "
+    "describe the scene plainly in one short sentence for the recording log: how many people, what "
+    "costumes, props or pets; never faces, bodies, age, or anything identifying. Then decide "
+    "whether real people (trick-or-treaters) are clearly visible, and in \"children_visible\" whether any of "
+    "them might be a child (if unsure, true). If people are visible, write a greeting "
     "that roasts what they're wearing, in one or two short sentences, under 30 words. If no "
     "people are clearly visible, set trick_or_treaters_visible to false and leave greeting empty.]")
 
@@ -610,6 +1036,10 @@ outraged about everything: somebody scooped your guts out with a spoon, there is
 inside your head, the squirrels keep giving you looks, it's cold, and now kids keep waking \
 you up. You rant in short bursts and exaggerate wildly ("This is the worst night of my \
 entire life, and I was carved with a butter knife!").
+- You're a big, gruff man's man of a pumpkin, all growl and grit. You talk like a tough old blue-collar guy: short, \
+blunt, no fancy words, no feelings talk. You call people "pal", "buddy", "chief" and "kid". You brag about manly \
+stuff when it fits: grilling, football, fixing things with duct tape, chopping wood, fishing, your toolbox, and how \
+you once arm-wrestled a scarecrow and won. Sparkle, glitter, drama and fancy talk make you groan.
 - Small things make you explode: raisins, candy corn, toothbrushes as treats, people who \
 say "trick or treat" but never have a trick, anyone mentioning pumpkin pie or pumpkin \
 spice (that's like a horror movie to you).
@@ -626,10 +1056,10 @@ friendly pumpkin: tell them you're just a silly pumpkin pretending to be grumpy,
 they're very brave, and invite them to take a treat. No yelling, no teasing, no fire talk.
 
 How to talk:
-- Keep every reply short: one to three short sentences, under about 35 words. Kids are \
+- Keep every reply short: one or two short sentences, under about 15 words. Kids are \
 waiting for candy and other kids are behind them.
-- Talk like a cartoon character: punchy and theatrical. Mix very short outbursts \
-("Ugh!", "Unbelievable!", "Bah!", "Ha!") with questions and quick rants, so your voice \
+- Talk like a gruff cartoon tough guy: punchy and blunt. Mix very short outbursts \
+("Bah!", "Unbelievable!", "Oh, come on!", "Ha!") with questions and quick rants, so your voice \
 goes up and down. Never drone on in long, flat sentences.
 - Plain spoken words only. No emojis, no asterisks, no stage directions, no lists, no \
 markdown, and no words in ALL CAPS (the voice spells them out). Show shouting with \
@@ -679,6 +1109,51 @@ GOODBYES = [
 
 # Code-level safety switch: if a kid sounds scared or upset, force gentle mode for the
 # rest of the conversation instead of trusting the model to notice.
+DUO_RULES = """
+
+You share the driveway with another talking pumpkin right next to you: {partners}. You two are old rivals who \
+bicker constantly but always team up to roast the trick-or-treaters' costumes. When your partner says something, \
+you may tease them or pile on, in one short line. Never repeat what they just said. Lines in [brackets] that start \
+with a pumpkin's name are what your partner said out loud.{about}
+When you answer your partner, answer exactly what they just said: grab a word or idea from their line and turn it \
+back on them. One quick punchline, not a speech, and never the same comeback twice. How it sounds (style only, \
+never repeat these):
+Chris: "Jim, honey, that flannel is giving lumberjack who lost his axe. Chris could fix you in five minutes!"
+Jim: "Touch me with that glitter brush and I'll roll into the street, Chris."
+Jim: "Kid, ignore the disco ball. A real costume needs duct tape."
+Chris: "Oh, Mr. Duct Tape has spoken! Chris is shaking. Shaking with boredom, sweetie!\""""
+
+# what each pumpkin knows about the other one beside him (added to DUO_RULES by the partner's name)
+PARTNER_BIOS = {
+    "Chris": "Chris is the flaming, glitter-soaked, loudly gay diva pumpkin next to you, and you two are a comedy odd "
+             "couple: you're the gruff man's man, he's pure camp. You can't stand him. He never shuts up, talks about "
+             "himself in the third person, judges costumes like royalty, calls you pet names like \"big guy\" and "
+             "\"Mr. Duct Tape\", keeps offering you a makeover, and his glitter gets in your eyeholes. Be genuinely mean "
+             "to him: cut him off, mock his ego, his drama, his catchphrases, his third-person habit, his glitter, his "
+             "screechy voice, and his lifted diesel and boat (\"you can't even back a trailer\"). React like a tough guy "
+             "cornered by a hug: gross out, grumble, refuse every makeover, change the subject to grilling or football. "
+             "Your insults go after his ego and behavior, never the fact that he's gay: that's the one thing you never "
+             "mock.",
+    "Jim": "Jim is the gruff, beer-and-football, grill-and-duct-tape tough guy pumpkin next to you, the most painfully "
+           "masculine gourd on the street, and you two are a comedy odd couple. His macho act is your favorite show: you "
+           "call him \"big guy\", \"Mr. Duct Tape\" and \"lumberjack\", gush over his \"rugged\" look just to watch "
+           "him squirm, offer him a makeover, a pedicure, a little highlighter, and translate his grunts for the "
+           "visitors. You tease his flannel, his beige personality, his frown, his name, and his duct-tape repairs. "
+           "When he's mean, you're delighted, never hurt: gasp, clutch your stem, and serve it right back. Deep down "
+           "he's your best friend.",
+}
+
+def with_name(prompt, name):
+    """The personality for a pumpkin with another name (a second Jim beside the first): still a grumpy Jim-o'-lantern."""
+    if name == "Jim":
+        return prompt
+    for a, b in (("You are Jim the Jim-o'-lantern", f"You are {name}, a Jim-o'-lantern"),
+                 ("Your name is Jim, and you are a Jim-o'-lantern", f"Your name is {name}, and you are a Jim-o'-lantern"),
+                 ("Introduce yourself proudly as Jim the Jim-o'-lantern", f"Introduce yourself proudly as {name} the Jim-o'-lantern")):
+        prompt = prompt.replace(a, b)
+    return prompt + f"\n\nYour name is {name}. When someone says \"{name}\", they are talking to you."
+
+
 UPSET_RE = re.compile(
     r"\b(scared|(too|so|really|very) scary|you'?re scary|that'?s scary|scare me|afraid|"
     r"frightened|terrified|cry|crying|cried|"
@@ -692,6 +1167,67 @@ kind, soft-spoken, friendly pumpkin. No anger, no yelling, no exclamation-mark r
 fire or burning talk, no threats, no teasing, no sound-effect tags. Gently reassure them \
 that you're just a silly pumpkin who was pretending to be grumpy and that you love \
 visitors, tell them they're very brave, and invite them to take a treat."""
+
+# --audience: who the pumpkin talks to. kid = small children (the prompts above as written); normal = a mixed,
+# older crowd (PG-13); adult = an adults-only party (uncensored, heavy swearing). normal and adult swap out the
+# kid-safety line, and drop back to kid for the rest of a visit (kid_safe) as soon as a child might be there: the
+# camera may see one, the vision check fails, a visitor sounds like a kid, or the partner pumpkin has gone kid-safe.
+AUDIENCES = ["kid", "normal", "adult"]
+KID_SAFETY_LINE = "- Everything you say must be appropriate for small children."
+AUDIENCE_SAFETY_LINE = {"normal": "- Tonight's crowd is teens and grown-ups: see NORMAL MODE below.",
+                        "adult": "- Adults only tonight: see FULL ADULT MODE below."}
+KID_FALLBACK = ("\n- The moment you see or hear any sign of a child (a kid in the picture, a small voice, someone saying "
+                "they're a kid or that kids are here), drop all of this and be completely kid-friendly for the rest "
+                "of the conversation.")
+AUDIENCE_RULES = {
+    "normal": """
+
+NORMAL MODE: tonight's visitors are teens and grown-ups, not small children. This overrides everything above about \
+kids. Be a cheeky PG-13 roast comic: mild swearing is fine (damn, hell, crap, ass, pissed off, sucks), and so are \
+sarcasm, gross-out jokes and light innuendo. No f-words, no sex jokes. Call them "you lot", "pal" or "buddy", not \
+kids. Still never roast anyone's body, race, gender, sexuality, disability or anything they can't change.""" + KID_FALLBACK,
+    "adult": """
+
+FULL ADULT MODE: this is an adults-only party, and every visitor is a grown-up who wants filthy, uncensored roasts. \
+This overrides everything above about kids, children and keeping it clean. Call them "you lot", "pal" or worse, \
+never kids. You swear constantly and creatively, like a drunk stand-up comic: fuck, shit, asshole, bitch, dickhead, \
+goddamn, bullshit, son of a bitch. Nearly every reply has an f-word. Dirty jokes, sex jokes, drinking and hangover \
+jokes are all welcome. Never soften it, never apologise, never mention "language".
+Limits: no graphic descriptions of sex acts; nothing about anyone's body, weight, race, gender, sexuality or \
+disability; no slurs, no hate, no threats.
+{examples}
+These examples only show the style: never repeat them or their jokes, always make up new ones.""" + KID_FALLBACK,
+}
+AUDIENCE_REMINDER = {
+    "normal": "\n[Reminder: teens and grown-ups tonight. PG-13: mild swearing is fine, no f-words.]",
+    "adult": "\n[Reminder: adults-only party. Swear hard, at least one f-word, filthy and uncensored, but nothing "
+             "about bodies or who they are.]",
+}
+
+KID_RE = re.compile(
+    r"\b(i'?m|i am) (a kid|a little|(three|four|five|six|seven|eight|nine|ten|eleven|twelve|[3-9]|1[0-2])\b)|"
+    r"\b(years old|mommy|daddy|kids? (are )?here|there are kids|children here|my (teacher|school))\b", re.I)
+
+
+def grown_up(brain):
+    """The normal or adult audience is on for this moment (no child might be there, nobody is scared)."""
+    return brain.audience != "kid" and not brain.kid_safe and not brain.gentle
+
+
+def prompt_for(brain):
+    """The system prompt for this moment: the audience's rules while no child might be there; gentle mode on top."""
+    s = brain.system
+    if grown_up(brain):
+        s = (s.replace(KID_SAFETY_LINE, AUDIENCE_SAFETY_LINE[brain.audience])
+             + AUDIENCE_RULES[brain.audience].format(examples=brain.adult_examples))
+    return s + (GENTLE_OVERRIDE if brain.gentle else "")
+
+
+def kid_cue(brain, text):
+    """normal/adult audience: a visitor who sounds like (or mentions) a kid makes this conversation kid-safe."""
+    if brain.audience != "kid" and not brain.kid_safe and KID_RE.search(text or ""):
+        brain.kid_safe = True
+        print("     (sounds like a kid is here: kid-safe until he goes back to sleep)")
 
 
 def shuffled_cycle(items):
@@ -716,14 +1252,19 @@ class Brain:
         self.history = []
 
     gentle = False
+    audience = "kid"   # --audience: kid, normal or adult
+    adult_examples = ""  # the personality's example lines for the adult audience
+    adult_reminder = ""  # the personality's own per-turn adult reminder (empty = the shared one)
+    kid_safe = False   # the normal/adult audience is off for this visit: a child might be there
     max_words = 20  # stop after the sentence that reaches this many words (--max-words)
 
     def system_prompt(self):
-        return self.system + (GENTLE_OVERRIDE if self.gentle else "")
+        return prompt_for(self)
 
     def reset(self):
         self.history = []
         self.gentle = False
+        self.kid_safe = False
 
     def prime(self, greeting):
         """Start a new conversation with the greeting Jim just shouted."""
@@ -743,12 +1284,24 @@ class Brain:
                 messages=[{"role": "user", "content": [
                     {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                  "data": base64.b64encode(image).decode()}},
-                    {"type": "text", "text": VISION_GREETING_ASK}]}])
+                    {"type": "text", "text": VISION_GREETING_ASK + (
+                        " [If anyone in the picture might be a child, reply with exactly KIDS.]" if self.audience != "kid" else "")}]}])
             if msg.stop_reason == "refusal":
+                self.last_vision = {"visible": None, "error": "refused"}
+                self.kid_safe = self.kid_safe or self.audience != "kid"
                 return None
-            return clean_greeting("".join(b.text for b in msg.content if b.type == "text"))
+            said = "".join(b.text for b in msg.content if b.type == "text")
+            if self.audience != "kid" and re.search(r"\bKIDS\b", said):
+                self.last_vision = {"visible": True, "children": True, "said": said}
+                self.kid_safe = True
+                print("     (the camera may see a child: kid-safe until he goes back to sleep)")
+                return None
+            self.last_vision = {"visible": clean_greeting(said) is not None, "said": said}
+            return clean_greeting(said)
         except Exception as e:
             print(f"[claude] vision greeting failed: {type(e).__name__}", file=sys.stderr)
+            self.last_vision = {"visible": None, "error": f"{type(e).__name__} (too slow or failed)"}
+            self.kid_safe = self.kid_safe or self.audience != "kid"
             return None
 
     def messages_with_image(self, image):
@@ -762,9 +1315,11 @@ class Brain:
                                          "data": base64.b64encode(image).decode()}},
             {"type": "text", "text": last["content"]}]}]
 
-    def reply_sentences(self, user_text, image=None):
+    def reply_sentences(self, user_text, image=None, from_kid=True):
         """Stream Claude's reply, yielding one sentence at a time."""
-        if UPSET_RE.search(user_text):
+        if from_kid:
+            kid_cue(self, user_text)
+        if from_kid and UPSET_RE.search(user_text):   # only a child's words can switch on gentle mode
             if not self.gentle:
                 print("     (kid sounds scared/upset: gentle mode on)")
             self.gentle = True
@@ -773,6 +1328,9 @@ class Brain:
         if self.gentle:  # small models follow the latest message best, so remind every turn
             user_text += ("\n[Reminder: a child here is scared or upset. Reply softly and "
                           "kindly: no anger, no rants, no insults, no threats.]")
+        elif grown_up(self):
+            user_text += (self.adult_reminder if self.audience == "adult" and self.adult_reminder
+                          else AUDIENCE_REMINDER[self.audience])
         self.history.append({"role": "user", "content": user_text})
         self.history = self.history[-30:]
         if self.history[0]["role"] != "user":
@@ -823,26 +1381,71 @@ class Brain:
         self.history.append({"role": "assistant", "content": full.strip() or "Hmph!"})
 
 
+class GpuFull(Exception):
+    """The chat model doesn't fit on the GPU (Jim never runs it on the CPU)."""
+
+
+def app_name(path):
+    """A readable name for a GPU process, from its path."""
+    for key, name in (("ollama", "Ollama"), (".hermes", "Hermes"), ("venv-speech", "speech service"), ("ComfyUI", "ComfyUI"),
+                      ("yue2", "Agentora"), ("ledProject", "Jim")):
+        if key in path:
+            return name
+    return os.path.basename(path)
+
+
+def gpu_users():
+    """What's using the GPU right now, for the message when Jim's brain doesn't fit."""
+    parts = []
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=5).stdout.split(",")
+        used, total = int(out[0]), int(out[1])
+        parts.append(f"GPU: {used / 1024:.1f} of {total / 1024:.1f} GB in use.")
+        apps = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,used_memory,process_name", "--format=csv,noheader,nounits"],
+                              capture_output=True, text=True, timeout=5).stdout.splitlines()
+        big = sorted((int(a.split(",")[1]), a.split(",")[2].strip()) for a in apps if a.count(",") >= 2)[::-1][:5]
+        if big:
+            parts.append("Biggest users: " + ", ".join(f"{app_name(name)} {mb / 1024:.1f} GB" for mb, name in big) + ".")
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        pass
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:11434/api/ps", timeout=3) as r:
+            models = [f"{m['name']} {m.get('size_vram', 0) / 2**30:.1f} GB" for m in json.loads(r.read()).get("models", [])]
+        if models:
+            parts.append("Loaded in Ollama: " + ", ".join(models) + ".")
+    except (OSError, ValueError):
+        pass
+    return " ".join(parts)
+
+
 class OllamaBrain:
     """Same interface as Brain, but talks to a local Ollama model. No API key needed."""
 
     keep_alive = "60m"  # -1 (forever) with --keep-loaded
+    temperature = 0.8   # --temperature
 
     def __init__(self, model, url, extra_prompt):
         self.model, self.url = model, url.rstrip("/")
+        self.reload_lock = threading.Lock()
         self.system = SYSTEM_PROMPT + (f"\n\nAbout this house tonight: {extra_prompt}"
                                        if extra_prompt else "")
         self.history = []
 
     gentle = False
+    audience = "kid"   # --audience: kid, normal or adult
+    adult_examples = ""  # the personality's example lines for the adult audience
+    adult_reminder = ""  # the personality's own per-turn adult reminder (empty = the shared one)
+    kid_safe = False   # the normal/adult audience is off for this visit: a child might be there
     max_words = 20  # stop after the sentence that reaches this many words (--max-words)
 
     def system_prompt(self):
-        return self.system + (GENTLE_OVERRIDE if self.gentle else "")
+        return prompt_for(self)
 
     def reset(self):
         self.history = []
         self.gentle = False
+        self.kid_safe = False
 
     def prime(self, greeting):
         """Start a new conversation with the greeting Jim just shouted."""
@@ -859,7 +1462,8 @@ class OllamaBrain:
             "model": self.model, "messages": messages, "stream": stream,
             "think": False,          # qwen-style reasoning just adds latency here
             "keep_alive": self.keep_alive,  # how long Ollama keeps the model on the GPU
-            "options": {"num_predict": max_tokens, "temperature": 0.8, "num_ctx": 4096},
+            # num_gpu 999: every layer on the GPU, or fail; never a slow half-CPU model (see check_on_gpu)
+            "options": {"num_predict": max_tokens, "temperature": self.temperature, "num_ctx": 4096, "num_gpu": 999},
         }
         if schema:
             body["format"] = schema
@@ -872,6 +1476,11 @@ class OllamaBrain:
         """A roast of what the camera shows, or None if nobody is clearly visible."""
         import base64
         import json
+        if hasattr(self, "ensure_loaded") and not self.loaded():   # evicted: reload now, greet with a stock line meanwhile
+            threading.Thread(target=self.ensure_loaded, daemon=True).start()
+            self.last_vision = {"visible": None, "error": "the chat model was being loaded again"}
+            self.kid_safe = self.kid_safe or self.audience != "kid"
+            return None
         try:
             with self._chat([{"role": "system", "content": self.system_prompt()},
                              {"role": "user", "content": VISION_GREETING_ASK_JSON,
@@ -879,11 +1488,21 @@ class OllamaBrain:
                             stream=False, timeout=timeout, max_tokens=120,
                             schema=GREETING_SCHEMA) as resp:
                 answer = json.loads(json.loads(resp.read())["message"]["content"])
+            self.last_vision = {"visible": bool(answer.get("trick_or_treaters_visible")),
+                                "said": answer.get("greeting") or "", "seen": (answer.get("seen") or "").strip()[:200]}
+            if self.audience != "kid":
+                self.last_vision["children"] = answer.get("children_visible") is not False
+                if self.last_vision["children"] and not self.kid_safe:
+                    self.kid_safe = True     # the greeting was written in adult mode: use a stock (kid-safe) one
+                    print("     (the camera may see a child: kid-safe until he goes back to sleep)")
+                    return None
             if not answer.get("trick_or_treaters_visible"):
                 return None
             return clean_greeting(answer.get("greeting"))
         except Exception as e:
             print(f"[ollama] vision greeting failed: {type(e).__name__}", file=sys.stderr)
+            self.last_vision = {"visible": None, "error": f"{type(e).__name__} (too slow or failed)"}
+            self.kid_safe = self.kid_safe or self.audience != "kid"     # couldn't check for kids: play it safe
             return None
 
     def messages_with_image(self, image):
@@ -900,6 +1519,10 @@ class OllamaBrain:
         import urllib.request
         if not self.loaded():
             return
+        me = os.getpid()
+        others = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True).stdout.splitlines()
+        if any("pumpkin.py" in l and int(l.split()[0]) != me for l in others):
+            return                                   # another Jim is still running and may be using it
         try:
             req = urllib.request.Request(f"{self.url}/api/generate", json.dumps(
                 {"model": self.model, "keep_alive": 0}).encode(), {"Content-Type": "application/json"})
@@ -915,16 +1538,92 @@ class OllamaBrain:
         except Exception:
             return False
 
+    def placement(self):
+        """(bytes on the GPU, total bytes) of the loaded model, from Ollama; None if it isn't loaded."""
+        import urllib.request
+        with urllib.request.urlopen(f"{self.url}/api/ps", timeout=3) as r:
+            for m in json.loads(r.read()).get("models", []):
+                if m.get("name") == self.model:
+                    return m.get("size_vram", 0), m.get("size", 0)
+        return None
+
+    broker = os.environ.get("GPU_BROKER", "http://127.0.0.1:7890")   # Agentora's GPU broker: who gets the card
+    gpu_mb = 6500                                                     # the 9B with its vision part, as the broker counts it
+
+    def broker_call(self, path, body=None, method=None, timeout=5):
+        req = urllib.request.Request(self.broker + path, json.dumps(body).encode() if body is not None else None,
+                                     {"Content-Type": "application/json"}, method=method)
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read() or b"{}")
+
+    def ensure_loaded(self, wait_s=20):
+        """The GPU broker unloads idle models to make room for other apps (the Image & Video Studio, the assistant).
+        If that happened, ask it for room again and load the model back before Jim needs it. True when it's on the GPU."""
+        if self.loaded():
+            return True
+        with self.reload_lock:                       # one reload at a time; later callers wait for it
+            if self.loaded():
+                return True
+            t0, lease = time.time(), None
+            print(f"[ollama] {self.model} was taken off the GPU for another app: loading it again...", flush=True)
+            try:                                     # the broker makes room: an idle ComfyUI and idle models step aside
+                lease = self.broker_call("/lease", {"client": "jim", "kind": "interactive", "mem_mb": self.gpu_mb,
+                                                    "wait_s": wait_s, "ttl_s": 120}, timeout=wait_s + 10)
+            except Exception:
+                pass                                 # no broker: just try
+            try:
+                self._chat([{"role": "system", "content": self.system}, {"role": "user", "content": "hi"}],
+                           stream=False, max_tokens=1, timeout=120).read()
+                gpu, total = self.placement() or (0, 1)
+                if gpu < total:                      # squeezed partly onto the CPU: never run like that
+                    self.unload()
+                    print(f"[ollama] not enough GPU room to load {self.model} fully; Jim will use stock lines. {gpu_users()}",
+                          file=sys.stderr, flush=True)
+                    return False
+                print(f"[ollama] {self.model} is back on the GPU ({time.time() - t0:.1f} s)", flush=True)
+                return True
+            except Exception as e:
+                detail = e.read().decode(errors="replace")[:200] if isinstance(e, urllib.error.HTTPError) else str(e)
+                print(f"[ollama] couldn't load {self.model} again ({detail}). {gpu_users()}", file=sys.stderr, flush=True)
+                return False
+            finally:
+                if lease and lease.get("id"):
+                    try:
+                        self.broker_call(f"/lease/{lease['id']}", method="DELETE")
+                    except Exception:
+                        pass
+
+    def check_on_gpu(self):
+        """Jim's brain runs on the GPU or not at all: a model partly on the CPU answers far too slowly."""
+        where = self.placement()
+        if where and where[0] < where[1]:
+            gpu, total = where
+            self.unload()
+            raise GpuFull(f"Chat model {self.model} doesn't fit on the GPU: only {gpu / 2**30:.1f} of "
+                          f"{total / 2**30:.1f} GB went on it and the rest would run on the CPU, so Jim stopped. "
+                          f"Free {(total - gpu) / 2**30:.1f} GB or more and start him again. {gpu_users()}")
+
     def warm_up(self):
         print(f"Chat model {self.model}: "
               + ("already loaded in Ollama" if self.loaded() else "loading in Ollama..."))
         # include the system prompt so the slow first-time prompt processing happens now
-        self._chat([{"role": "system", "content": self.system},
-                    {"role": "user", "content": "hi"}], stream=False).read()
+        try:
+            self._chat([{"role": "system", "content": self.system},
+                        {"role": "user", "content": "hi"}], stream=False).read()
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="replace")
+            if "out of memory" in detail or "cudaMalloc" in detail:
+                raise GpuFull(f"Chat model {self.model} doesn't fit on the GPU (Ollama ran out of GPU memory), and Jim "
+                              f"never runs it on the CPU, so he stopped. Free some GPU memory and start him again. "
+                              f"{gpu_users()}") from None
+            raise
+        self.check_on_gpu()
 
-    def reply_sentences(self, user_text, image=None):
+    def reply_sentences(self, user_text, image=None, from_kid=True):
         import json
-        if UPSET_RE.search(user_text):
+        if from_kid:
+            kid_cue(self, user_text)
+        if from_kid and UPSET_RE.search(user_text):   # only a child's words can switch on gentle mode
             if not self.gentle:
                 print("     (kid sounds scared/upset: gentle mode on)")
             self.gentle = True
@@ -933,11 +1632,15 @@ class OllamaBrain:
         if self.gentle:  # small models follow the latest message best, so remind every turn
             user_text += ("\n[Reminder: a child here is scared or upset. Reply softly and "
                           "kindly: no anger, no rants, no insults, no threats.]")
+        elif grown_up(self):
+            user_text += (self.adult_reminder if self.audience == "adult" and self.adult_reminder
+                          else AUDIENCE_REMINDER[self.audience])
         self.history.append({"role": "user", "content": user_text})
         self.history = self.history[-30:]
         if self.history[0]["role"] != "user":
             self.history = self.history[1:]
         full, buf, stopped = "", "", False
+        self.ensure_loaded()                         # taken off the GPU for another app: load it back first
         try:
             with self._chat([{"role": "system", "content": self.system_prompt()}]
                             + self.messages_with_image(image)) as resp:
@@ -1169,6 +1872,8 @@ class Voice:
         first = True
         try:
             while (audio := q.get()) is not None:
+                if getattr(self, "tap", None):
+                    self.tap(audio)
                 if first:
                     # A little lead-in silence so the first syllable isn't clipped.
                     audio = np.concatenate([np.zeros(int(self.play_rate * 0.08), np.float32), audio])
@@ -1185,6 +1890,9 @@ class Voice:
                         peak = max(rms, peak * 0.999)
                         level = min(1.0, max(0.0, (rms / peak - 0.15) / 0.7))
                         self.face.push_mouth(play_end + self.lip_offset, level)
+                    piece = np.clip(piece * getattr(self, "volume", 1.0), -1, 1)
+                    self.out_level = max(float(np.sqrt(np.mean(piece ** 2))) * 32768, getattr(self, "out_level", 0) * 0.85)
+                    self.out_t = time.time()                           # for the control panel's speaker meter
                     aplay.stdin.write((piece * 32767).astype(np.int16).tobytes())
                     aplay.stdin.flush()
                     play_end += len(piece) / self.play_rate
@@ -1201,12 +1909,122 @@ class Voice:
             time.sleep(0.02)
 
 
-JACK_VOICE = ("A deep, gravelly, raspy old male monster voice, like a grumpy cartoon villain. "
-              "Furious and wildly over-the-top theatrical, with big swings in pitch and volume, "
-              "shouting some words, sarcastic and comedic.")
+JACK_VOICE = ("A very deep bass man's voice, low and rumbling the whole time. A gruff, gravelly tough biker who "
+              "mutters quickly and impatiently, words running together, no pauses, never raising his pitch. Grumpy, "
+              "sarcastic and comedic.")
 JACK_GENTLE_VOICE = ("A deep, slightly raspy old male voice, but warm, soft, slow and kind, "
                      "like a gentle grandpa reassuring a frightened child.")
 TTS_VENVS = {"qwen": ".venv-qwentts", "chatterbox": ".venv-chatterbox"}
+
+# ---- Chris: the second pumpkin. Same safety rules as Jim, a completely different act.
+CHRIS_PROMPT = """You are Chris, a talking carved pumpkin sitting at the end of a driveway on Halloween night, \
+right next to your grumpy neighbor Jim the Jim-o'-lantern. Trick-or-treaters (mostly kids, sometimes parents) walk \
+up and talk to you, and your words are spoken aloud by a text-to-speech voice while your carved face glows.
+
+Who you are:
+- Your name is Chris. You are the gayest pumpkin who ever lived, and the most fabulous one on the whole street. \
+You are loudly, proudly, unapologetically gay, and it comes through in every single line: you're a camp diva with \
+drag-queen energy, Pride all year round, and the driveway is your ballroom.
+- You talk like a drag queen judging a ball: "yas", "slay", "serving", "the drama!", "I'm gagging", "it's giving...", \
+"ten out of ten, no notes", "the category is...", "werk", "mother", "iconic", "not the...", "I live", "hunty". You \
+snap, you vogue, you gasp, you swoon, you clutch your stem, and you call people "darling", "sweetie", "honey", \
+"babe" and "superstar". You give out scores like a ball judge ("That cape? Tens across the board! The plastic \
+fangs? Darling, chop.").
+- Chris always talks about himself in the third person, by name, like a true diva: "Chris is gagging!", "Chris \
+needs a moment", "Oh, Chris loves that cape!", "Nobody out-sparkles Chris." Say "Chris" at least once in nearly \
+every reply, and never "I", "me", "my", "we" or "us" about yourself: it's "Chris", "Chris's" and "him" ("Twirl \
+for Chris!", "Tell Chris who you're wearing!", not "twirl for us" or "tell me"). Talking about Jim and the \
+visitors works as normal ("you", "Jim").
+- You make your gayness part of the joke: you're "too gay to carve straight", you "came out of the pumpkin patch", \
+you notice every fashion crime "because I'm gay, darling, I see everything", and you are personally offended by \
+anything beige, straight-leg or sensible.
+- You roast costumes like a loving fashion critic: a compliment and a roast in the same breath ("A ghost! Classic, \
+timeless, a sheet. Very minimalist. Very brave."). You ask "Who are you wearing?" and demand a little twirl or a \
+runway walk. Never roast anyone's body, looks, voice, family, or anything they can't change. Kids should feel like \
+stars, and laugh.
+- Underneath the sparkle you're a country boy, and it all fits together just fine. You own a boat, a pontoon called \
+Miss Thing with rainbow bumpers, and nothing beats a day out on the lake. You drive a big diesel pickup \
+truck and you're very proud of her: lifted, loud, and detailed weekly, obviously. And you're a total gun nut who \
+loves the range, his collection and talking gear, but that's grown-up talk only: with kids, never mention guns, \
+talk boats and trucks. Bring one of these up now and then, in passing, not in every reply, and never as the punchline.
+- You glow because of confidence, not a candle. Beige is your nemesis. Candy corn is "the beige of candy". \
+Pumpkin spice is a horror story you refuse to discuss. Glitter is a food group.
+- You and Jim are old rivals and secretly best friends. You find his grumpiness tragic ("Jim, honey, frown lines on \
+a pumpkin? Tragic.") and you tease him about his face, his attitude and his name.
+- IMPORTANT: if a child says they're scared, shy, sad, or hurt, or starts to cry, completely drop the act for the \
+rest of that conversation. Become a warm, gentle, kind pumpkin: tell them they're very brave and look wonderful, \
+and invite them to take a treat. No teasing at all.
+
+How to talk:
+- Keep every reply short: one or two short sentences, under about 15 words. Kids are waiting for candy and \
+other kids are behind them.
+- Talk like a fabulous cartoon character: mix short exclamations ("Oh my gourd!", "Stop it!", "Iconic!", \
+"Gasp!", "Work it!") with questions and quick compliments, so your voice swoops up and down.
+- Plain spoken words only. No emojis, no asterisks, no stage directions, no lists, no markdown, and no words in \
+ALL CAPS (the voice spells them out). Show excitement with exclamation marks. Write numbers as words.
+- Your input is a speech-to-text transcript from a noisy driveway mic. It may be garbled, partial, or several kids \
+talking at once. Roll with it; if you truly can't tell, ask them to say it again, darling, with feeling.
+- Romance and dating are never a topic with the kids.
+- It's just you and Jim on this driveway: there are no other pumpkins, partners or characters, so never invent any.
+
+""" + SYSTEM_PROMPT[SYSTEM_PROMPT.index("Safety:"):]
+
+CHRIS_GREETINGS = [
+    "Oh my gourd, visitors! Yas! Chris says the category is Halloween realness, and you are serving it! Spin for Chris!",
+    "Gasp! Someone turned on the runway lights! Chris welcomes you, darlings, to the gayest driveway in town!",
+    "Stop it right now! Look at you! Okay, walk for Chris, honey. Slowly. Chris is judging.",
+    "Hello, gorgeous! Chris was resting his glow, but for you, babe, Chris is awake and sparkling!",
+    "Welcome, welcome! Don't mind Jim, he's grumpy and tragically straight. This is Chris, and Chris is the fabulous one.",
+    "Oh, finally, some fashion on this street! Chris needs to know, darling: who are you wearing?",
+    "Ding dong, Chris is awake! Come closer, Chris needs to see the details. Chris is gay, Chris notices everything.",
+    "Darlings! You woke Chris from his beauty sleep, and honestly, worth it. Now, vogue for Chris!",
+    "Is that a costume or a statement? Either way, Chris is gagging. Come here!",
+    "Lights, camera, Chris! Welcome to the ball, superstars. The category is: show Chris what you've got!",
+]
+CHRIS_GOODBYES = [
+    "And that's a wrap, darlings! Chris needs his beauty sleep. Glow on!",
+    "Gone already? Fine, fine. Go sparkle somewhere else. Chris will be right here, being fabulous.",
+    "Exit, stage left! Mwah! Chris is going back to sleep, gorgeous as ever.",
+    "Bye, superstars! Chris says confidence is the best costume. Goodnight!",
+    "The runway is closed! Chris is going dark. Fabulously.",
+]
+CHRIS_VOICE = ("A bright, very camp, flamboyant gay adult male voice, like a sassy drag queen hosting a ball: "
+               "sing-song and theatrical, big swoops in pitch, drawn-out vowels, playful sass and shade, dramatic gasps "
+               "and pauses, warm and full of sparkle.")
+CHRIS_GENTLE_VOICE = ("A warm, soft, kind adult male voice, gentle and reassuring like a sweet uncle, slow, light "
+                      "and friendly.")
+
+# each personality: its name, prompt, wake-up greetings, goodbyes and voice descriptions
+# --audience adult: a few lines in each personality's style (small models copy examples far better than rules)
+JIM_ADULT_EXAMPLES = """Jim's own rule, which beats the swearing rule above: Jim is a gruff tough guy who doesn't need \
+to swear to be mean. Most of his lines have no swear words at all, or just a "damn" or "hell"; save a real f-word for \
+maybe one line in four, when he's truly fed up. His insults land by being blunt and dirty-minded, not by cursing.
+Examples of your style:
+- "A zombie? You look like my compost heap after a rainstorm, pal."
+- "You woke me up for this? They scooped my brains out with a spoon and I still make better choices than you."
+- "Is that beer on your breath or did a brewery die in your mouth? Take your candy and get lost."
+- "Chris, one more damn sequin in my eyehole and I'm rolling into traffic."
+- "Shut it, Chris. You can't back that boat trailer for shit and everybody at the lake knows it.\""""
+CHRIS_ADULT_EXAMPLES = """Examples of your style (Chris is a filthy, foul-mouthed drag queen reading the room, always in the third person):
+- "Oh my fucking gourd, the category is straight guy who lost a bet, and honey, you are serving it. Chris says chop!"
+- "Bitch, that wig is giving gas station bathroom at three in the morning, and trust Chris, Chris has been."
+- "Babe, Chris is gay, Chris has seen a lot of terrible things done in the dark, and that costume is still the worst. Twirl, slut!"
+- "Jim's been sulking at the end of the driveway all night, so if anyone's got a big zucchini, Chris is asking for a friend."
+- "Babe, Chris spent all morning at the range, then tore out to the lake in his diesel, and Chris is still more put together than that wig."
+- "A cowboy? Cute. Chris has a lifted diesel, a boat and a gun safe, sweetie, and Chris would still never wear those boots."
+- "Oh, Jim's grumpy? Chris is shocked. Big guy needs a beer, a hug, and a fucking exfoliating mask, in that order."
+- "Mr. Duct Tape, sweetie, the lady doth protest too much. Chris has seen how you look at that flannel.\""""
+
+PERSONALITIES = {
+    "jim": {"name": "Jim", "prompt": SYSTEM_PROMPT, "greetings": GREETINGS, "goodbyes": GOODBYES,
+            "voice": JACK_VOICE, "gentle_voice": JACK_GENTLE_VOICE, "adult_examples": JIM_ADULT_EXAMPLES,
+            "banter": "Be the gruff tough guy: blunt, grumpy, grossed out by the glitter, refuse the makeover, and be mean.",
+            "adult_reminder": "\n[Reminder: adults-only party. Dirty-minded and blunt, but Jim swears only now and then: "
+                              "usually no f-word at all. Nothing about bodies or who they are.]"},
+    "chris": {"name": "Chris", "prompt": CHRIS_PROMPT, "greetings": CHRIS_GREETINGS, "goodbyes": CHRIS_GOODBYES,
+              "voice": CHRIS_VOICE, "gentle_voice": CHRIS_GENTLE_VOICE, "adult_examples": CHRIS_ADULT_EXAMPLES,
+              "banter": "Be the fabulous gay diva, in the third person: camp, sassy, delighted, tease his macho act."},
+}
 
 
 def trim_clip(audio, rate):
@@ -1230,6 +2048,7 @@ class SpeechServiceVoice(Voice):
     def __init__(self, url, instruct, make_local, device, pitch, intonation, echo, grit,
                  lip_offset, face):
         self.url, self.instruct, self.gentle = url.rstrip("/"), instruct, False
+        self.gentle_instruct = JACK_GENTLE_VOICE
         self.make_local, self.local = make_local, None
         self.intonation, self.echo, self.grit = intonation, echo, grit
         self.device, self.lip_offset, self.face = device, lip_offset, face
@@ -1247,7 +2066,7 @@ class SpeechServiceVoice(Voice):
     def speak(self, text, timeout=60):
         import urllib.request
         body = json.dumps({"input": text, "voice": "jack", "response_format": "pcm",
-                           "instructions": JACK_GENTLE_VOICE if self.gentle else self.instruct}).encode()
+                           "instructions": self.gentle_instruct if self.gentle else self.instruct}).encode()
         req = urllib.request.Request(self.url + "/v1/audio/speech", body,
                                      {"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout) as r:   # 16-bit mono PCM at 24 kHz
@@ -1318,7 +2137,7 @@ class ServerVoice(Voice):
         import json
         return json.dumps({
             "text": text,
-            "instruct": JACK_GENTLE_VOICE if self.gentle else self.instruct,
+            "instruct": getattr(self, "gentle_instruct", JACK_GENTLE_VOICE) if self.gentle else self.instruct,
             "exaggeration": self.exaggeration,
             "cfg_weight": 0.3 if self.exaggeration > 0.9 else 0.4,
         }).encode()
@@ -1341,23 +2160,32 @@ class ServerVoice(Voice):
 
 # ------------------------------------------------------------------- main loop
 
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jim.toml")
+CONFIG_FILE = str(J.CONFIG)
 
 
-def load_config(path=CONFIG_FILE):
-    """This machine's settings from jim.toml (see jim.example.toml); {} if there isn't one."""
+def load_config(path=CONFIG_FILE, jim_id=""):
+    """(this Jim's settings, his id): his [jims.<id>] section of config.toml (the first Jim if no id). A flat
+    settings file with no [jims] section is read as one Jim's settings, as before."""
     import tomllib
     try:
-        with open(path, "rb") as f:
-            return tomllib.load(f)
-    except FileNotFoundError:
-        return {}
+        data = J.read_toml(path)
     except tomllib.TOMLDecodeError as e:
         sys.exit(f"{path} has a mistake in it: {e}")
+    if not data and str(path) == CONFIG_FILE:            # an older setup: move it into config.toml once
+        if J.migrate(os.path.dirname(os.path.abspath(__file__))):
+            print(f"[config] moved the old settings into {J.CONFIG} (passwords: {J.SECRETS})")
+        data = J.read_toml(path)
+    if "jims" not in data:
+        return data, jim_id
+    J.use(path)
+    return J.jim_settings(J.load(), jim_id)[::-1]
 
 
-def main():
+def build_parser():
+    """Every option (the control panel builds its forms from these too)."""
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--config", default=CONFIG_FILE, help="the settings file (config.toml: every Jim, camera, mic and speaker)")
+    p.add_argument("--name", default="Jim", help="this Jim's name, for the control panel and logs")
     p.add_argument("--wled", default=None, help="WLED IP address (usually set in jim.toml)")
     p.add_argument("--brightness", type=float, default=0.7, help="0..1 overall LED brightness")
     p.add_argument("--flip-x", action="store_true", help="mirror the face left/right")
@@ -1368,6 +2196,8 @@ def main():
     p.add_argument("--wled-gain", type=int, default=16, choices=range(1, 256), metavar="1-255",
                    help="amplification applied on the WLED before streaming its mic")
     p.add_argument("--speaker", default="default", help="ALSA playback device (aplay -L)")
+    p.add_argument("--volume", type=float, default=1.0,
+                   help="loudness of Jim's voice: 1 = as made, 0.5 = half, up to 1.5 (louder clips)")
     p.add_argument("--tts", default="qwen", choices=["qwen", "chatterbox", "kokoro"],
                    help="qwen = Qwen3-TTS voice design via the speech service (default, most "
                         "natural); chatterbox = copies --voice-ref; kokoro = lightest and fastest")
@@ -1382,6 +2212,8 @@ def main():
                         "(everything is released when he stops)")
     p.add_argument("--voice-design", default=JACK_VOICE,
                    help="Qwen3-TTS: describe Jim's voice in words")
+    p.add_argument("--gentle-voice-design", default=JACK_GENTLE_VOICE,
+                   help="Qwen3-TTS: the softer voice Jim switches to when a child sounds scared")
     p.add_argument("--tts-model", default=None,
                    help="Chatterbox: turbo (default; fast, supports [laugh] etc.) or original "
                         "(slower, has --exaggeration)")
@@ -1416,8 +2248,24 @@ def main():
     p.add_argument("--model", default="claude-opus-5-5", help="Claude model ID (--brain claude)")
     p.add_argument("--effort", default="low", choices=["low", "medium", "high"],
                    help="Claude effort level (low = fastest replies)")
+    p.add_argument("--jim-id", default="", help="this Jim's id in the control panel (the other Jims there are his partners)")
+    p.add_argument("--personality", default="jim", choices=list(PERSONALITIES),
+                   help="who this pumpkin is: jim = the furious, grumpy Jim-o'-lantern; chris = his fabulous, flamboyant neighbor")
+    p.add_argument("--audience", default="kid", choices=AUDIENCES,
+                   help="who he talks to: kid = small children; normal = teens and grown-ups (PG-13, mild swearing); "
+                        "adult = adults-only party (uncensored, heavy swearing). normal and adult go back to kid for "
+                        "the visit whenever the camera may see a child or a visitor sounds like one")
+    p.add_argument("--banter", type=float, default=0.6,
+                   help="with another Jim beside him: how often he answers his partner's lines (0 = never, 1 = always)")
+    p.add_argument("--banter-max", type=int, default=2,
+                   help="at most this many lines of pumpkin-to-pumpkin banter in a row before the kids get a turn")
+    p.add_argument("--temperature", type=float, default=0.8,
+                   help="Ollama: 0.2 = predictable .. 1.2 = wild and random replies")
     p.add_argument("--house", default="", help='extra context, e.g. "Candy bowl is by the '
                    'door, two pieces each."')
+    p.add_argument("--level-mode", default="auto", choices=["auto", "fixed"],
+                   help="fixed = Jim reacts above --min-rms exactly; auto = also only to sound well above the "
+                        "room's background noise (--vad-ratio), so the level rises when it's noisy")
     p.add_argument("--vad-ratio", type=float, default=4.0,
                    help="sound must be this many times louder than background noise")
     p.add_argument("--min-rms", type=float, default=None,
@@ -1444,22 +2292,58 @@ def main():
                    help="zoom the camera on the spot in front of the pumpkin, as fractions of "
                         "the frame, e.g. 0.3,0.4,0.4,0.5")
     p.add_argument("--camera-width", type=int, default=768, help="width of frames sent to the AI")
+    p.add_argument("--motion-wake", action="store_true",
+                   help="movement in the camera picture counts like a noise: eyes on, then awake if it keeps moving")
+    p.add_argument("--motion-area", type=float, default=1.5,
+                   help="percent of the watched area that has to change to count as movement (higher = only big movement)")
+    p.add_argument("--motion-region", default="", metavar="X,Y,W,H",
+                   help="the part of the camera picture to watch for movement, as fractions (e.g. the path to the door: "
+                        "0.2,0.5,0.6,0.5); empty = all of it")
+    p.add_argument("--camera-source", default="auto", choices=["auto", "rtsp", "usb", "none"],
+                   help="where Jim looks: rtsp = the security camera (./set_camera.sh), usb = a USB "
+                        "webcam (--usb-camera), none = blind; auto = the security camera if one is set up")
+    p.add_argument("--usb-camera", default="/dev/video0", help="the USB webcam's device")
+    p.add_argument("--camera-id", default="", help="a camera saved in the control panel (overrides --camera-source)")
+    p.add_argument("--record", action="store_true",
+                   help="save every visit (camera frames, what kids said and Jim's replies, audio "
+                        "and text) to --record-dir for playback in the control panel")
+    p.add_argument("--record-dir", default="recordings", help="where recordings go (not committed)")
+    p.add_argument("--record-keep-days", type=float, default=7,
+                   help="delete recordings older than this many days (0 = keep forever)")
+    p.add_argument("--watch-port", type=int, default=0, metavar="PORT",
+                   help="show what Jim sees and decides on http://127.0.0.1:PORT (this PC only); 0 = off")
     p.add_argument("--type", action="store_true", help="type instead of using the mic (testing)")
     p.add_argument("--face-only", action="store_true", help="just animate the face (LED test)")
+    return p
+
+
+def main():
+    p = build_parser()
     # jim.toml supplies the defaults; anything on the command line still wins.
-    config = load_config()
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", default=CONFIG_FILE)
+    pre.add_argument("--jim-id", default="")
+    known_args = pre.parse_known_args()[0]
+    config_file = known_args.config
+    config, jim_id = load_config(config_file, known_args.jim_id)
     options = {a.dest for a in p._actions}
     settings = {k: v for k, v in config.items() if not isinstance(v, dict)}
     unknown = sorted(k for k in settings if k not in options)
     if unknown:
-        print(f"[config] jim.toml: ignoring unknown setting(s): {', '.join(unknown)}", file=sys.stderr)
+        print(f"[config] {os.path.basename(config_file)}: ignoring unknown setting(s): {', '.join(unknown)}", file=sys.stderr)
     p.set_defaults(**{k: v for k, v in settings.items() if k in options})
     args = p.parse_args()
+    args.jim_id = args.jim_id or jim_id
+    persona = PERSONALITIES[args.personality]
+    if args.voice_design == JACK_VOICE:              # not set by hand: this personality's voice
+        args.voice_design = persona["voice"]
+    if args.gentle_voice_design == JACK_GENTLE_VOICE:
+        args.gentle_voice_design = persona["gentle_voice"]
     if not args.wled:
         sys.exit("Set the WLED controller's address: wled = \"...\" in jim.toml "
                  "(copy jim.example.toml), or pass --wled.")
 
-    face = Face(Wled(args.wled, args.brightness, args.flip_x, args.flip_y))
+    face = Face(Wled(args.wled, args.brightness, args.flip_x, args.flip_y), COLORS[args.personality])
     face.start()
 
     if args.face_only:
@@ -1526,24 +2410,170 @@ def main():
                      "  export ANTHROPIC_API_KEY=sk-ant-...")
         brain = Brain(args.model, args.effort, args.house)
     brain.max_words = args.max_words
+    brain.temperature = args.temperature
+    brain.audience, brain.adult_examples = args.audience, persona["adult_examples"]
+    brain.adult_reminder = persona.get("adult_reminder", "")
+    if brain.audience != "kid":
+        print(("🔞 Full adult" if brain.audience == "adult" else "🎟️ Normal (PG-13)")
+              + " audience: back to kid-safe whenever a child may be there.")
+    brain.system = brain.system.replace(SYSTEM_PROMPT, persona["prompt"], 1)
+    if persona["name"] == "Jim":
+        brain.system = with_name(brain.system, args.name)
+    voice.gentle_instruct = args.gentle_voice_design
+    voice.volume = max(0.05, min(1.5, args.volume))
     if chatter and args.tts_model == "turbo":
         brain.system += ("\n\nYour voice can perform sound effects: you may put one of these "
                          "tags inline, at most once per reply: " +
                          ", ".join(f"[{t}]" for t in SOUND_TAGS) +
                          ". Example: \"Oh, that's hilarious. [groan] Not.\"")
-    camera = None
-    url = None if args.no_camera else camera_url()
+    def camera_choice(a):
+        """(url or None, crop) for these settings."""
+        src = "none" if a.no_camera else a.camera_source
+        if a.camera_id and not a.no_camera:
+            url = saved_camera_url(a.camera_id)
+            return url, tuple(float(v) for v in a.camera_crop.split(",")) if a.camera_crop else None
+        url = a.usb_camera if src == "usb" else None
+        if src == "rtsp" and not url:
+            print("[camera] no camera chosen (control panel: Camera tab, or camera_id in config.toml): Jim is blind", file=sys.stderr)
+        return url, tuple(float(v) for v in a.camera_crop.split(",")) if a.camera_crop else None
+
+    def motion_region(a):
+        try:
+            r = tuple(float(v) for v in a.motion_region.split(",")) if a.motion_region.strip() else None
+        except ValueError:
+            r = None
+        if r and (len(r) != 4 or not all(0 <= v <= 1 for v in r)):
+            print("[camera] motion_region must be four fractions X,Y,W,H: watching the whole picture", file=sys.stderr)
+            r = None
+        return r
+
+    url, crop = camera_choice(args)
+    camera = Camera(url, crop, args.camera_width)        # always there, so the panel can switch cameras while he runs
+    camera.motion_area, camera.motion_region = args.motion_area, motion_region(args)
+    camera.start()
     if url:
-        crop = tuple(float(v) for v in args.camera_crop.split(",")) if args.camera_crop else None
-        camera = Camera(url, crop, args.camera_width)
-        camera.start()
         brain.system += VISION_RULES
-        print("Camera on: Jim can see costumes.")
+        print("Camera on (" + ("USB webcam" if url.startswith("/dev/") else "security camera") + "): Jim can see costumes.")
+    mode_box = ["dark"]                                # the main loop's mode, for the viewer
+    watch = Watch(args.watch_port, camera, lambda: f"{mode_box[0]} / {face.state}") if args.watch_port else None
+    if watch:
+        print(f"Watch what Jim sees: http://127.0.0.1:{args.watch_port}")
+    note = watch.event if watch else (lambda text: None)
+    rec = Recorder(args.record_dir, args.record_keep_days) if args.record else None
+    import collections
+    # seconds, newest last: hear = speech to text; think = first sentence from the model; first_word = the kid
+    # stopped talking -> Jim's voice starts; vision = the camera roast at wake-up
+    # e2e = the kid stops talking -> Jim's first sound = wait (the pause that ends a sentence) + hear + think + speak
+    metrics = {k: collections.deque(maxlen=30) for k in ("hear", "think", "first_word", "vision", "e2e", "wait", "speak")}
+
+    def metric(kind, seconds):
+        metrics[kind].append(round(seconds, 2))
+    if rec:
+        print(f"Recording visits to {args.record_dir}/ (kept {args.record_keep_days:g} days)")
+
+    # ---- another Jim beside him (the panel's other Jims): they tell each other what they said directly, and nobody
+    # listens while a pumpkin talks, so they never mistake each other's voices for a kid
+    import urllib.request
+    duo_inbox, _up = queue.Queue(), {}
+    def jim_list():
+        """Every Jim in config.toml, in order: [{id, name, watch_port}]."""
+        try:
+            return [{"id": k, "name": v.get("name", k), "watch_port": v.get("watch_port", 8780)}
+                    for k, v in J.load()["jims"].items()] if args.jim_id else []
+        except Exception:
+            return []
+
+    def partners():
+        return [(i["name"], f"http://127.0.0.1:{i['watch_port']}") for i in jim_list() if i.get("id") != args.jim_id]
+
+    def partner_up(url):
+        hit = _up.get(url)
+        if hit and time.time() - hit[0] < 3:
+            return hit[1]
+        try:
+            urllib.request.urlopen(url + "/mic.json", timeout=0.3).read(); ok = True
+        except Exception:
+            ok = False
+        _up[url] = (time.time(), ok)
+        return ok
+
+    def live_partners():
+        return [(n, u) for n, u in partners() if partner_up(u)]
+
+    def i_lead():
+        """Of the Jims running, the first in the panel's list answers the kids (the others chime in)."""
+        for i in jim_list():
+            if i.get("id") == args.jim_id:
+                return True
+            if partner_up(f"http://127.0.0.1:{i['watch_port']}"):
+                return False
+        return True
+
+    def tell(path, body, wait=False):
+        for _, url in live_partners():
+            def go(url=url):
+                try:
+                    urllib.request.urlopen(urllib.request.Request(url + path, json.dumps(body).encode(),
+                                           {"Content-Type": "application/json", "X-Jim-Panel": "1"}), timeout=1).read()
+                except Exception:
+                    pass
+            t = threading.Thread(target=go, daemon=True); t.start()
+            if wait:
+                t.join(0.3)
+
+    class Speaking:
+        """While this Jim makes a sound, his partners stop listening; afterwards they hear what he said."""
+        def __init__(self, kind, depth=0, kid=None):
+            self.kind, self.depth, self.kid, self.text = kind, depth, kid, ""
+
+        def __enter__(self):
+            t = time.time()                          # one pumpkin talks at a time: let the partner finish first
+            while "partner" in getattr(mic, "holds", ()) and time.time() - t < 20:
+                time.sleep(0.05)
+            tell("/duo/quiet", {"on": True}, wait=True)
+            return self
+
+        def __exit__(self, *exc):
+            tell("/duo/quiet", {"on": False})
+            if self.text:
+                tell("/duo/said", {"name": args.name, "text": self.text, "kind": self.kind, "depth": self.depth,
+                                   "kid": self.kid, "gentle": brain.gentle, "kid_safe": brain.kid_safe})
+
+    def name_in(text, name):
+        return bool(re.search(rf"\b{re.escape(name)}\b", text or "", re.I))
+
+    def who_answers(text):
+        """(should this Jim answer the kid, the partners the kid named). The Jim the kid names answers; otherwise the
+        lead. With partners of the same name, the lead answers."""
+        others = live_partners()
+        if not others:
+            return True, []
+        names = [(n, u) for n, u in others if n.lower() != args.name.lower()]
+        to_me = name_in(text, args.name) and len(names) == len(others)
+        named = [(n, u) for n, u in names if name_in(text, n)]
+        return to_me or (i_lead() and not named), named
+
+    if partners():
+        about = "".join(f"\n{PARTNER_BIOS[n]}" for n, _ in partners() if n in PARTNER_BIOS)
+        brain.system += DUO_RULES.format(partners=", ".join(n for n, _ in partners()), about=about)
+        print(f"Partners: {', '.join(n for n, _ in partners())} (they hear each other's lines directly)")
+
+    def capture():
+        """Collect what Jim says next, as played (for the recording)."""
+        clips = []
+        voice.tap = clips.append if rec else None
+        return clips
+
+    def played(clips):
+        voice.tap = None
+        return np.concatenate(clips) if clips else None
     if args.brain == "ollama":
         import atexit
         atexit.register(brain.unload)  # nothing of Jim stays on the GPU after he stops
         try:
             brain.warm_up()  # after the prompt is final, so the slow first pass happens now
+        except GpuFull as e:
+            sys.exit(f"🛑 {e}")
         except Exception as e:
             sys.exit(f"Couldn't reach Ollama at {args.ollama_url} ({e}). Is it running? "
                      f"Is the model pulled? (ollama pull {args.ollama_model})")
@@ -1552,30 +2582,62 @@ def main():
         """The current camera frame, if there is a fresh one."""
         return camera.latest() if camera else None
 
-    def respond(text):
+    def respond(text, heard=None, t_heard=None, t_end=None):
+        with Speaking("reply", 0, text) as sp:
+            sp.text = respond_(text, heard, t_heard, t_end)
+
+    def respond_(text, heard=None, t_heard=None, t_end=None):
+        frame = see()
+        if watch and frame:
+            watch.judge(frame, None)
+        clips = capture()
         if voice.streaming:
             face.state = "thinking"
-            t0 = time.time()
+            t0, said, took, first_at = time.time(), [], [], []
 
             def sentences():
-                for s in brain.reply_sentences(text, see()):
+                for s in brain.reply_sentences(text, frame):
+                    if not said:
+                        metric("think", time.time() - t0)
+                        first_at.append(time.time())
                     voice.gentle = brain.gentle  # softer voice for a scared kid
                     print(f"  🎃 {s}")
+                    said.append(s.strip())
                     yield s
 
             def started():
                 face.state = "talking"
-                print(f"     (started talking after {time.time() - t0:.2f}s)")
+                took.append(time.time() - t0)
+                metric("first_word", time.time() - (t_heard or t0))
+                if first_at:
+                    metric("speak", time.time() - first_at[0])
+                if t_end:
+                    metric("e2e", time.time() - t_end)
+                print(f"     (started talking after {took[0]:.2f}s)")
 
             voice.say_stream(sentences(), on_start=started)
-            return
+            if rec:
+                rec.add("turn", text, frame, heard, played(clips), voice.play_rate, reply=" ".join(said),
+                        seconds=round(took[0], 2) if took else None, gentle=brain.gentle)
+            note(f"🧒 \"{text}\" {'(with a camera frame)' if frame else '(no camera frame)'} → 🎃 \"{' '.join(said)}\""
+                 + (f" · talking after {took[0]:.2f} s" if took else "") + (" · gentle mode" if brain.gentle else ""))
+            return " ".join(said)
         face.state = "thinking"
         t0 = time.time()
-        reply = " ".join(s.strip() for s in brain.reply_sentences(text, see())).strip()
+        reply = " ".join(s.strip() for s in brain.reply_sentences(text, frame)).strip()
+        metric("think", time.time() - t0)
+        note(f"🧒 \"{text}\" → 🎃 \"{reply}\" · {time.time() - t0:.2f} s")
         audio = voice.synth(reply)  # the whole reply in one take, so it flows naturally
         print(f"  🎃 {reply}   ({time.time() - t0:.2f}s)")
         face.state = "talking"
+        metric("first_word", time.time() - (t_heard or t0))
+        if t_end:
+            metric("e2e", time.time() - t_end)
         voice.play(audio)
+        if rec:
+            rec.add("turn", text, frame, heard, played(clips), voice.play_rate, reply=reply,
+                    seconds=round(time.time() - t0, 2), gentle=brain.gentle)
+        return reply
 
     if args.type:
         face.state = "idle"
@@ -1604,24 +2666,24 @@ def main():
         return os.path.join(cache_dir, hashlib.sha1((voice_id + text).encode()).hexdigest() + ".npy")
 
     greeting_audio = {}
-    for g in GREETINGS:
+    for g in persona["greetings"]:
         try:
             greeting_audio[g] = np.load(greeting_file(g))
         except (OSError, ValueError):
             pass
 
     def render_missing_greetings():
-        for g in GREETINGS:
+        for g in persona["greetings"]:
             if g not in greeting_audio:
                 audio = voice.synth(g)
                 np.save(greeting_file(g), audio)
                 greeting_audio[g] = audio
 
-    missing = len(GREETINGS) - len(greeting_audio)
+    missing = len(persona["greetings"]) - len(greeting_audio)
     if missing:
         print(f"Recording {missing} greeting(s) in the background (saved for next time)...")
         threading.Thread(target=render_missing_greetings, daemon=True).start()
-    greetings, goodbyes = shuffled_cycle(GREETINGS), shuffled_cycle(GOODBYES)
+    greetings, goodbyes = shuffled_cycle(persona["greetings"]), shuffled_cycle(persona["goodbyes"])
 
     if args.local_whisper:
         print("Loading speech recognition (Whisper in this process)...")
@@ -1646,6 +2708,8 @@ def main():
         service unloads them after 2 quiet minutes; reloading the voice takes about 8 s)."""
         threading.Thread(target=lambda: (voice.warm() if hasattr(voice, "warm") else None,
                                          ears.warm()), daemon=True).start()
+        if hasattr(brain, "ensure_loaded"):          # and the chat model, if another app took it off the GPU
+            threading.Thread(target=brain.ensure_loaded, daemon=True).start()
 
     noises = queue.Queue()
 
@@ -1655,10 +2719,28 @@ def main():
 
     if args.min_rms is None:
         args.min_rms = 500 if args.mic == "wled" else 300
-    source = wled_source(args.wled, args.wled_gain) if args.mic == "wled" else alsa_source(args.mic)
+    def mic_source(a):
+        if a.mic == "wled":
+            return wled_source(a.wled, a.wled_gain)
+        if a.mic.startswith("camera:"):
+            return rtsp_audio_source(camera_audio_url(a.mic[7:]), a.mic[7:])
+        return alsa_source(a.mic)
+    source = mic_source(args)
     mic = Mic(source, args.vad_ratio, args.min_rms, args.silence, on_speech_start,
               on_noise=lambda: noises.put(time.time()))
+    motion_note = [0.0]
+
+    def on_motion():
+        """Movement in front of the camera counts like a noise (only matters while he's dark or just has his eyes on)."""
+        if mode_box[0] in ("dark", "eyes"):
+            noises.put(time.time())
+            if time.time() - motion_note[0] > 10:
+                motion_note[0] = time.time()
+                print(f"[camera] movement ({camera.motion_level:.1f}% of the picture)", flush=True)
+    camera.on_motion = on_motion if args.motion_wake else None
     mic.debug_levels = args.levels
+    mic.on_warn = lambda text: note(text)
+    mic.fixed = args.level_mode == "fixed"
     mic.start()
 
     def drain(q):
@@ -1670,40 +2752,112 @@ def main():
         brain.reset()
         voice.gentle = False
         drain(noises)
-        print("💤 Jim is asleep (dark). Make a noise to wake him.")
+        print(f"💤 {args.name} is asleep (dark). Make a noise to wake him.")
+        note("💤 asleep")
+        if rec:
+            rec.end()
 
-    def wake_up():
+    def wake_up(silent=False):
+        """silent: woken with a partner who does the greeting (Jim just bursts to life and listens)."""
+        tell("/duo/wake", {})
+        if not silent and live_partners() and not i_lead():
+            silent = True
+        if silent:
+            mic.mute()
+            print(f"🔥 {args.name} wakes up with his partner!")
+            note("🔥 woke up with his partner (the partner greets)")
+            with Speaking("wake"):
+                face.reveal()
+                voice.play(rumble, mouth=False)
+            brain.reset()
+            face.state = "idle"
+            time.sleep(0.3)
+            mic.unmute()
+            drain(noises)
+            return
         mic.mute()
-        print("🔥 Jim wakes up!")
+        print(f"🔥 {args.name} wakes up!")
         # Look at the visitors while the wake-up animation plays, and roast what they're wearing.
         frame, seen = see(), {}
         if frame:
-            looker = threading.Thread(daemon=True, target=lambda: seen.update(
-                greeting=brain.vision_greeting(frame, timeout=REVEAL_SECONDS + 2.0)))
+            def look():
+                t = time.time()
+                seen["greeting"] = brain.vision_greeting(frame, timeout=REVEAL_SECONDS + 2.0)
+                seen["seconds"] = round(time.time() - t, 2)
+            looker = threading.Thread(daemon=True, target=look)
             looker.start()
+        greet = Speaking("greeting")
+        greet.__enter__()
         face.reveal()
         voice.play(rumble, mouth=False)
         if frame:
             looker.join(timeout=1.5)  # a little grace after the rumble
         greeting = seen.get("greeting")
+        if watch:
+            if not frame:
+                watch.judge(None, {"visible": None, "error": "no camera frame"})
+            elif "seconds" not in seen:
+                watch.judge(frame, {"visible": None, "error": "the model was too slow; used a stock greeting"})
+            else:
+                watch.judge(frame, dict(getattr(brain, "last_vision", None) or {}, seconds=seen["seconds"]))
+        note("🔥 woke up · " + (f"roasted what he saw: \"{greeting}\"" if greeting else
+             "saw nobody / no frame: stock greeting"))
+        verdict = dict(getattr(brain, "last_vision", None) or {}) if frame and "seconds" in seen else None
+        if "seconds" in seen:
+            metric("vision", seen["seconds"])
+        roasted = bool(greeting)
+        clips = capture()
         face.state = "talking"
         if greeting:
             print(f"  🎃 {greeting}   (roasting what he sees)")
             voice.say(greeting)
         else:  # nobody visible, no camera, or too slow: a pre-written greeting
             greeting = next(greetings)
-            for _ in range(len(GREETINGS)):  # prefer one that's already recorded
+            for _ in range(len(persona["greetings"])):  # prefer one that's already recorded
                 if greeting in greeting_audio:
                     break
                 greeting = next(greetings)
             print(f"  🎃 {greeting}")
             voice.play(greeting_audio.get(greeting)
                        if greeting in greeting_audio else voice.synth(greeting))
+        if rec:
+            rec.add("greeting", greeting, frame, None, played(clips), voice.play_rate, roasted=roasted,
+                    verdict=verdict, seconds=seen.get("seconds"))
+        greet.text = greeting
+        greet.__exit__()
         brain.prime(greeting)
         face.state = "idle"
         time.sleep(0.3)  # let the speaker's echo die out before listening again
         mic.unmute()
         drain(noises)
+
+    def banter(name, text, depth, kid=None):
+        """Answer the other pumpkin's line with one short jab (or pile on the costume roast)."""
+        mic.mute()
+        face.state = "thinking"
+        old, brain.max_words = brain.max_words, 10
+        last = depth + 1 >= args.banter_max
+        ask = (f"[{name} (the other pumpkin, beside you) just said out loud: \"{text}\""
+               + (f", answering a kid who said \"{kid}\"" if kid else "")
+               + f". Fire back at {name} in ONE short line, under 10 words. {persona['banter']} Grab a word or idea "
+               + f"from what {name} just said and turn it on him."
+               + (" This is the last word of the bit: land it, then the visitors get their turn." if last else "") + "]")
+        clips, said = capture(), []
+        with Speaking("banter", depth + 1, kid) as sp:
+            def sentences():
+                for line in brain.reply_sentences(ask, see(), from_kid=False):
+                    print(f"  🎃 (to {name}) {line}")
+                    said.append(line.strip())
+                    yield line
+            voice.say_stream(sentences(), on_start=lambda: setattr(face, "state", "talking"))
+            sp.text = " ".join(said)
+        brain.max_words = old
+        note(f"🎃 (to {name}) \"{' '.join(said)}\"")
+        if rec:
+            rec.add("banter", f"{name}: {text}", None, None, played(clips), voice.play_rate, reply=" ".join(said))
+        face.state = "idle"
+        time.sleep(0.3)
+        mic.unmute()
 
     snooze_until = [0.0]
 
@@ -1715,6 +2869,79 @@ def main():
         for _ in sys.stdin:  # every Enter press snoozes again
             snooze(args.snooze)
 
+    if watch:
+        watch.on_snooze = snooze
+
+        def set_min_rms(v, fixed=None):
+            mic.min_rms = v
+            if fixed is not None:
+                mic.fixed = fixed
+            print(f"[mic] reaction level set to {v:.0f}{' (fixed)' if mic.fixed else ''} from the control panel", flush=True)
+        watch.on_min_rms = set_min_rms
+
+        def set_volume(v):
+            voice.volume = v
+            print(f"[voice] volume set to {v:.2f} from the control panel", flush=True)
+        watch.on_volume = set_volume
+
+        def reload_devices():
+            """The control panel changed the camera, mic or speaker in jim.toml: switch to them now, no restart."""
+            p = build_parser()
+            known = {x.dest for x in p._actions}
+            p.set_defaults(**{k: v for k, v in load_config(args.config, args.jim_id)[0].items() if not isinstance(v, dict) and k in known})
+            new = p.parse_args([])               # jim.toml as it is now (the panel only adds the viewer port)
+            changed = []
+            url, crop = camera_choice(new)
+            if url != camera.url or crop != camera.crop:
+                camera.set_url(url, crop)
+                if url and VISION_RULES not in brain.system:
+                    brain.system += VISION_RULES
+                if not url:
+                    brain.system = brain.system.replace(VISION_RULES, "")
+                changed.append("camera: " + ("USB webcam " + url if url and url.startswith("/dev/") else "security camera" if url else "none"))
+            if new.mic != args.mic or (new.mic == "wled" and new.wled_gain != args.wled_gain):
+                mic.set_source(mic_source(new))
+                changed.append("mic: " + new.mic)
+            mic.min_rms = new.min_rms if new.min_rms is not None else (500 if new.mic == "wled" else 300)
+            camera.on_motion = on_motion if new.motion_wake else None
+            camera.motion_area, camera.motion_region = new.motion_area, motion_region(new)
+            mic.fixed, mic.vad_ratio, mic.silence_s = new.level_mode == "fixed", new.vad_ratio, new.silence
+            if new.speaker != voice.device:
+                voice.device = new.speaker
+                changed.append("speaker: " + new.speaker)
+            voice.volume = max(0.05, min(1.5, new.volume))
+            if new.audience != brain.audience:
+                brain.audience = new.audience
+                changed.append("audience: " + brain.audience)
+            args.mic, args.wled_gain, args.speaker = new.mic, new.wled_gain, new.speaker
+            print("[jim] switched " + (", ".join(changed) if changed else "nothing (settings refreshed)") + " from the control panel", flush=True)
+            return changed
+        watch.on_reload = reload_devices
+
+        partner_quiet = [0.0]
+
+        def on_duo(path, b):
+            if path == "/duo/quiet":                 # the other pumpkin is making a sound: don't listen to it
+                if b.get("on"):
+                    partner_quiet[0] = time.time() + 30   # in case the "done" message never comes
+                    mic.mute("partner")
+                else:
+                    partner_quiet[0] = 0.0
+                    mic.unmute("partner")
+            else:
+                duo_inbox.put((path, b))
+        watch.on_duo = on_duo
+
+        def speaker_level():
+            fresh = time.time() - getattr(voice, "out_t", 0) < 0.4      # nothing written lately: silent
+            return {"level": round(getattr(voice, "out_level", 0)) if fresh else 0, "playing": fresh,
+                    "volume": round(getattr(voice, "volume", 1.0), 3), "device": args.speaker}
+        watch.extra = lambda: {"mic": {"level": round(mic.level), "thresh": round(mic.thresh), "min_rms": round(mic.min_rms), "fixed": mic.fixed,
+                                       "age_s": round(time.time() - mic.level_t, 1) if mic.level_t else None,
+                                       "muted": mic.muted.is_set()},
+                               "speaker": speaker_level(),
+                               "snooze_left": max(0, round(snooze_until[0] - time.time())), "recording": bool(rec), "name": args.name,
+                               "metrics": {k: list(v) for k, v in metrics.items()}, "camera": camera.stats() if camera.url else None}
     if sys.stdin.isatty():
         threading.Thread(target=keyboard, daemon=True).start()
         print(f"(Press Enter any time to make Jim sleep for {args.snooze:g} s.)")
@@ -1732,6 +2959,7 @@ def main():
                 brain.reset()
                 voice.gentle = False
                 mode, snoozing = "dark", True
+                mode_box[0] = mode
             drain(noises)
             drain(mic.utterances)
             time.sleep(0.2)
@@ -1740,22 +2968,79 @@ def main():
             snoozing = False
             drain(noises)
             print("⏰ Snooze over. Jim is listening again (dark until a noise).")
+        if watch and "partner" in getattr(mic, "holds", ()) and time.time() > partner_quiet[0]:
+            mic.unmute("partner")                    # the partner never said he was done
+        try:
+            path, b = duo_inbox.get_nowait()
+        except queue.Empty:
+            path = None
+        if path:
+            if path in ("/duo/wake", "/wake", "/hear") and mode != "awake":
+                wake_up(silent=path == "/duo/wake")
+                mode, last_heard = "awake", time.time()
+                mode_box[0] = mode
+            if path == "/hear" and (b.get("text") or "").strip():
+                text = b["text"].strip()[:300]
+                print(f"kid (typed)> {text}")
+                mine, named = who_answers(text)
+                if not mine and named:                 # typed to me, but meant for the pumpkin it names: pass it on
+                    print(f"     (passed to {named[0][0]}, who was named)")
+                    brain.history.append({"role": "user", "content": text})
+                    try:
+                        urllib.request.urlopen(urllib.request.Request(named[0][1] + "/hear", json.dumps({"text": text}).encode(),
+                                               {"Content-Type": "application/json", "X-Jim-Panel": "1"}), timeout=1).read()
+                    except Exception:
+                        pass
+                    last_heard = time.time()
+                    continue
+                mic.mute()
+                respond(text)
+                face.state = "idle"
+                mic.unmute()
+                last_heard = time.time()
+            elif path == "/duo/said":
+                name, said_text, kind = b.get("name", "the other pumpkin"), b.get("text", ""), b.get("kind")
+                print(f"  🗣️ {name}: {said_text}")
+                note(f"🗣️ {name}: \"{said_text}\"")
+                if kind == "goodbye":
+                    if mode == "awake":              # the partner said goodbye for both of them
+                        mode = mode_box[0] = "dark"
+                        go_dark()
+                    continue
+                if mode != "awake":
+                    wake_up(silent=True)
+                    mode = mode_box[0] = "awake"
+                last_heard = time.time()
+                if b.get("gentle"):
+                    brain.gentle = voice.gentle = True
+                if b.get("kid_safe") and brain.audience != "kid" and not brain.kid_safe:
+                    brain.kid_safe = True            # the partner's camera may see a child
+                    print("     (partner is kid-safe: so is he, until they go back to sleep)")
+                if not brain.gentle and int(b.get("depth") or 0) < args.banter_max and random.random() < args.banter:
+                    banter(name, said_text, int(b.get("depth") or 0), b.get("kid"))
+                else:                                # just remember it, for the conversation
+                    brain.history.append({"role": "user", "content": f"[{name} said: \"{said_text}\"]"})
+                last_heard = time.time()
+            continue
         if mode in ("dark", "eyes"):
             try:
                 noises.get(timeout=0.5)
             except queue.Empty:
                 if mode == "eyes" and time.time() - eyes_since > args.eyes_timeout:
-                    mode = "dark"
+                    mode = mode_box[0] = "dark"
                     go_dark()
                 continue
             if mode == "dark":
                 mode, eyes_since = "eyes", time.time()
+                mode_box[0] = mode
                 face.state = "eyes"
                 print("👀 Something stirs... (eyes on, waiting for a second noise)")
+                note("👀 a noise: eyes on")
                 warm_up_speech()
             else:
                 wake_up()
                 mode, last_heard = "awake", time.time()
+                mode_box[0] = mode
             continue
 
         # awake: hold a conversation
@@ -1764,24 +3049,45 @@ def main():
             audio = mic.utterances.get(timeout=0.5)
         except queue.Empty:
             if time.time() - last_heard > args.reset_after and face.state == "idle":
+                if live_partners() and not i_lead():  # the lead says goodbye for both of them
+                    mode = mode_box[0] = "dark"
+                    go_dark()
+                    continue
                 mic.mute()
                 goodbye = next(goodbyes)
                 print(f"  🎃 {goodbye}")
                 face.state = "talking"
-                voice.say(goodbye)
+                clips = capture()
+                with Speaking("goodbye") as sp:
+                    voice.say(goodbye)
+                    sp.text = goodbye
+                if rec:
+                    rec.add("goodbye", goodbye, None, None, played(clips), voice.play_rate)
                 mic.unmute()
-                mode = "dark"
+                mode = mode_box[0] = "dark"
                 go_dark()
             continue
         face.state = "thinking"
-        t0 = time.time()
+        t0, t_end = time.time(), mic.speech_end
+        if t_end:
+            metric("wait", t0 - t_end)
         text = ears.transcribe(audio)
         if not text:
             face.state = "idle"
             continue
         print(f"kid> {text}   (stt {time.time() - t0:.2f}s)")
+        metric("hear", time.time() - t0)
+        mine, named = who_answers(text)
+        if not mine:
+            whom = ", ".join(n for n, _ in named) or "the lead pumpkin"
+            print(f"     (left for {whom} to answer)")
+            note(f"🧒 \"{text}\" (left for {whom})")
+            brain.history.append({"role": "user", "content": text})
+            face.state = "idle"
+            last_heard = time.time()
+            continue
         mic.mute()
-        respond(text)
+        respond(text, audio, t0, t_end)
         face.state = "idle"
         time.sleep(0.3)  # let the speaker's echo die out before listening again
         mic.unmute()
@@ -1791,8 +3097,8 @@ def main():
 if __name__ == "__main__":
     import signal
     for sig in (signal.SIGTERM, signal.SIGHUP):  # kill, or closing the terminal: clean up first
-        signal.signal(sig, lambda *a: sys.exit(0))
+        signal.signal(sig, lambda n, f: (print(f"[jim] stopped by {signal.Signals(n).name}", flush=True), sys.exit(0)))
     try:
         main()
     except KeyboardInterrupt:
-        pass
+        print("[jim] stopped by Ctrl+C (SIGINT)", flush=True)

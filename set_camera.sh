@@ -1,27 +1,23 @@
 #!/usr/bin/env bash
-# Save Jim's camera address (with its password) to a private file outside the repo.
-# Usage: ./set_camera.sh [camera-ip] [user] [stream-path]
-# Anything left out comes from the [camera] section of jim.toml.
+# Save a security camera for Jim: its address goes in ~/.config/jim/config.toml, its password in secrets.toml (only you
+# can read it), and the first Jim looks through it. The control panel's Camera tab does the same.
+# Usage: ./set_camera.sh <camera-ip> <user> [stream-path]      (Reolink: h264Preview_01_main; an NVR: _02_, _03_, ...)
 set -euo pipefail
 cd "$(dirname "$0")"
-cfg() {
-  .venv/bin/python -c "
-import tomllib
-try: print(tomllib.load(open('jim.toml', 'rb')).get('camera', {}).get('$1', ''))
-except Exception: print('')"
-}
-ip=${1:-$(cfg ip)}
-user=${2:-$(cfg user)}
-path=${3:-$(cfg path)}
-path=${path:-h264Preview_01_main}   # Reolink main stream; other brands differ
-if [ -z "$ip" ] || [ -z "$user" ]; then
-  echo "Set ip and user under [camera] in jim.toml, or run: $0 <camera-ip> <user> [stream-path]" >&2
+if [ $# -lt 2 ]; then
+  echo "Usage: $0 <camera-ip> <user> [stream-path]" >&2
   exit 1
 fi
-read -rsp "Password for $user@$ip (typing is hidden): " pass
+read -rsp "Password for $2@$1 (typing is hidden): " pass
 echo
-mkdir -p ~/.config/jim
-umask 077
-printf 'rtsp://%s:%s@%s:554/%s\n' "$user" "$pass" "$ip" "$path" > ~/.config/jim/rtsp
-chmod 600 ~/.config/jim/rtsp
-echo "Saved to ~/.config/jim/rtsp (readable only by you). Jim will use it automatically."
+JIM_CAM_PASS="$pass" .venv/bin/python - "$1" "$2" "${3:-h264Preview_01_main}" <<'PY'
+import os, sys
+import jimconfig as J
+ip, user, path = sys.argv[1:4]
+cid = "security-camera"
+J.update(lambda cfg: cfg["cameras"].__setitem__(cid, {"name": "Security camera", "kind": "rtsp", "ip": ip, "user": user, "path": path}))
+sec = J.load_secrets(); sec["cameras"][cid] = {"password": os.environ["JIM_CAM_PASS"]}; J.save_secrets(sec)
+first = J.jim_ids()[0]
+J.update(lambda cfg: cfg["jims"][first].__setitem__("camera_id", cid))
+print(f"Saved. {J.CONFIG} has the camera, {J.SECRETS} its password; Jim looks through it from his next start.")
+PY

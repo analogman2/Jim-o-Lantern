@@ -90,15 +90,57 @@ What I used:
    Jim expects Agentora's speech service on `http://127.0.0.1:7895` (`systemctl --user status
    agentora-speech`). Without it, he falls back to the local copies `setup.sh` installs.
 3. Flash the [firmware patch](#firmware-patch) to your WLED controller (or use `--mic default`).
-4. Copy the settings file and put in your WLED controller's address (and your mic, speaker and
-   camera if you use them). `jim.toml` isn't committed, so your addresses stay private:
-   ```bash
-   cp jim.example.toml jim.toml
-   ```
+4. Start the control panel (`./panel.sh`, below) and set your WLED controller's address, mic, speaker and camera
+   there, or write `~/.config/jim/config.toml` by hand from [`config.example.toml`](config.example.toml). The
+   settings live outside the repo, so your addresses and passwords stay private.
 5. Start Jim:
    ```bash
    ./start.sh
    ```
+
+## Control panel
+
+```bash
+./panel.sh
+```
+
+Then open **http://127.0.0.1:8790** on the same PC. The panel runs Jim for you (Start / Stop / Restart / Snooze;
+stopping the panel stops Jim) and has tabs for:
+
+- **Live:** the camera, the exact frame Jim last judged and the vision model's verdict, a hearing meter (how loud
+  the mic is vs. what Jim reacts to), a log of wake-ups and replies, and Jim's console.
+- **Camera:** saved cameras (security cameras over RTSP, the other cameras on the same NVR, USB webcams) with
+  previews; the password goes only in `secrets.toml`.
+- **Mic:** pick the microphone, record 3 seconds to see the background noise and get a suggested minimum loudness.
+- **Voice:** the voice descriptions (normal and gentle), pitch, intonation, echo and grit, with a Preview that
+  plays in the browser.
+- **Replies:** house rules, creativity (temperature), reply length, the chat model, timing and the LED face.
+- **Recordings:** turn recording on, and play back each visit: the frames, what the kids said (as heard) and Jim's
+  replies (as played). Recordings hold children's voices and pictures: they stay in `recordings/` (never
+  committed) and are deleted after `record_keep_days` (7 by default).
+
+**More than one Jim:** press **＋ Jim** in the panel's header to add another pumpkin with his own LED controller.
+Each Jim has his own section of `config.toml` (`[jims.<id>]`), camera, mic, speaker,
+recordings folder and metrics; the header shows each one's state, and every tab shows the selected Jim. Saved cameras,
+mics and speakers are shared, but a USB mic, webcam or speaker can only serve one Jim at a time (the panel warns).
+They share one loaded copy of the chat model.
+
+**Jims that talk to each other:** Jims next to each other hear each other's lines directly (not through the air) and
+banter: after one speaks, the other may tease him or pile on the costume roast (**Replies → Two Jims**: how often,
+and how many lines in a row before the kids get a turn). Only one pumpkin talks at a time, and nobody listens while a
+pumpkin talks, so they never mistake each other's voices for a kid. They wake up together; the first Jim in the list
+greets and answers the kids, unless a kid says the other one's name. If a kid sounds scared, both go gentle and the
+banter stops. Each pumpkin has a **personality** (Replies tab, or when adding him): **Jim**, the furious, grumpy
+Jim-o'-lantern, or **Chris**, his fabulous, flamboyant neighbor who roasts costumes like a loving fashion critic and
+teases Jim about his frown lines. Each comes with his own voice, greetings and goodbyes, and the same kid-safety rules.
+Hear Chris: [`samples/chris_demo.wav`](samples/chris_demo.wav).
+**Type to Jim** on the Live tab says something to him as if a kid had.
+
+Camera, mic and speaker changes apply while Jim runs; voice and personality changes need a restart.
+Settings are saved to the selected Jim's file (your comments are kept). The panel itself answers only on
+this PC. To keep it running in the background, install `systemd/jim-panel.service` as a user service. To reach it
+from other devices, put it behind a sign-in (for example a reverse proxy that requires a login) and your VPN,
+such as Tailscale; never expose it as-is, since it controls the cameras and holds their passwords.
 
 ## Using Jim
 
@@ -115,17 +157,22 @@ What I used:
 | `./start.sh --tts chatterbox` / `--tts kokoro` | Use a different voice engine (these run locally) |
 | `./start.sh --speech-url http://host:7895` | Use a speech service somewhere else |
 | `./start.sh --local-whisper` | Run Whisper in Jim's own process instead of the speech service |
+| `./start.sh --watch-port 8780` | Watch what Jim sees and decides at http://127.0.0.1:8780: the live camera, the frame he last judged with the verdict, and a log |
 | `./start.sh --keep-loaded` | Keep the voice, ears and chat model warm while Jim runs |
 | `./start.sh --max-words 15` / `--silence 2` | Shorter replies / wait longer for kids to finish |
 | `./start.sh --ollama-model qwen3.6:27b` | Smarter chat model (needs about 11 GB more video memory) |
 | `./start.sh --brain claude` | Use the Claude API instead of Ollama (asks for an API key) |
 
-**Settings:** `jim.toml` holds this machine's settings: the WLED address, mic, speaker,
-service URLs and camera. Any option above can go there with underscores instead of dashes
-(`--min-rms 800` becomes `min_rms = 800`); options on the command line still win.
-`jim.example.toml` lists them. The camera password is never stored there: `./set_camera.sh`
-asks for it, using the camera's `ip` and `user` from `jim.toml`, and saves the full address to
-`~/.config/jim/rtsp`, readable only by you.
+**Settings** live in two files in `~/.config/jim/`, outside the repo (layout: [`config.example.toml`](config.example.toml)):
+
+- `config.toml`: everything except passwords: each Jim (`[jims.<id>]`: his LED controller, camera, mic, speaker,
+  voice and replies), the saved cameras, mics and speakers, and the panel's dashboard layout. Any option above can be
+  a setting, with underscores instead of dashes (`--min-rms 800` becomes `min_rms = 800`); the command line still wins.
+- `secrets.toml`: only the camera passwords, readable only by you.
+
+The control panel writes both. `./set_camera.sh <ip> <user> [path]` saves a security camera from the terminal (it asks
+for the password). An older setup (`jim.toml` and the files the panel used to keep) is moved into these two files
+automatically the first time the new version starts.
 
 The 12 greetings are recorded once and saved in `cache/`, so restarts are quick.
 
@@ -163,6 +210,7 @@ WLED is licensed under the EUPL-1.2, and the patch and prebuilt image are derive
 | File | Purpose |
 |---|---|
 | `pumpkin.py` | Jim: LEDs, mic, wake-up logic, speech recognition, personality, voice playback |
+| `jim_panel.py` / `panel.html` / `panel.sh` | The control panel (http://127.0.0.1:8790) |
 | `tts_server.py` | Local TTS server for Chatterbox, and the Qwen3-TTS fallback when the speech service is down |
 | `start.sh` / `run.sh` | Launchers |
 | `setup.sh` | Creates the Python environments and downloads models |
